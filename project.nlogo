@@ -3,12 +3,14 @@
 
 
 
-extensions [csv]
+extensions [csv gis]
 
-globals [day minute]
+globals [day minute total-population rg-features]
 
 breed [stations station]
 breed [trains train]
+breed [regions region]
+breed [residents resident]
 
 ;; id - id of "hub" station so same Id for station with multiple lines but same station name
 ;; stationId - if of individual station and line
@@ -23,17 +25,26 @@ breed [trains train]
 ;; nextStationId - stationId of next station
 ;; timeOfLastTrain - minute last train was spawned at terminus
 
-stations-own [id location lineId stationId nextStationId prevStationId isTerminus? firstIncTrainTime firstWeekDayIncTrainTime lastIncTrainTime firstDecTrainTime firstWeekDayDecTrainTime lastDecTrainTime firstSunIncTrainTime firstSunDecTrainTime timeOfLastTrain]
+stations-own [id location latLonLocation lineId stationId nextStationId prevStationId isTerminus? firstIncTrainTime firstWeekDayIncTrainTime lastIncTrainTime firstDecTrainTime firstWeekDayDecTrainTime lastDecTrainTime firstSunIncTrainTime firstSunDecTrainTime timeOfLastTrain]
 trains-own [id location nextStation stationId lineId direction popCount popList capacity]
 
+patches-own [random-n centroid name]
+regions-own [region-name population age-dist]
+
+residents-own [age life-type income home-location work-location]
+
 to read-station-csv
+  file-open "data/formatted_stations.csv"
+
   let data csv:from-row file-read-line
   while [not file-at-end?] [
     set data csv:from-row file-read-line
 
     create-stations 1 [
       set id last data
-      set location list (item 4 data) (item 5 data)
+      ;;set location list (item 4 data) (item 5 data)
+      set location gis:project-lat-lon item 6 data item 7 data
+
       set lineId item 16 data
       set stationId item 17 data
 
@@ -82,12 +93,73 @@ to read-station-csv
   ]
 end
 
+to read-regions
+  ; Note that setting the coordinate system here is optional
+  gis:load-coordinate-system "data/mygeodata_merged.prj"
+
+  set rg-features gis:load-dataset "data/mygeodata_merged.shp"
+  gis:set-world-envelope gis:envelope-of rg-features
+  gis:set-world-envelope-ds (list (item 0 gis:envelope-of rg-features + 0.01) (item 1 gis:envelope-of rg-features - 0.01) (item 2 gis:envelope-of rg-features + 0.001) (item 3 gis:envelope-of rg-features - 0.001))
+
+  let i 1
+  foreach gis:feature-list-of rg-features [feature ->
+
+    create-regions 1 [
+      setxy item 0 gis:location-of gis:centroid-of feature item 1 gis:location-of gis:centroid-of feature
+      set label gis:property-value feature "PLN_AREA_N"
+      set region-name gis:property-value feature "PLN_AREA_N"
+      set shape "circle"
+    ]
+
+    ask patches gis:intersecting feature [
+      set centroid gis:location-of gis:centroid-of feature
+      set name gis:property-value feature "PLN_AREA_N"
+      ask patch item 0 centroid item 1 centroid [
+        ;;set ID i
+      ]
+    ]
+    set i i + 1
+  ]
+  gis:set-drawing-color white
+  gis:draw rg-features 1
+end
+
+to read-population
+  file-open "data/total_resident_population.csv"
+
+  while [not file-at-end?] [
+    let data csv:from-row file-read-line
+
+    show [name] of patches with [name = item 0 data]
+    let reg regions with [name = item 0 data]
+    ask reg [
+      set population item 1 data * total-population
+      set age-dist (list (item 2 data) (item 3 data ) (item 4 data) (item 5 data) (item 6 data)
+        (item 7 data) (item 8 data) (item 9 data) (item 10 data) (item 11 data) (item 12 data)
+        (item 13 data) (item 14 data) (item 15 data) (item 16 data) (item 17 data) (item 18 data)
+        (item 19 data) (item 20 data))
+
+      hatch-residents population [
+        let random-var random-float 1
+        set age get-val-from-cdf random-var [age-dist] of myself
+        set home-location [list (pxcor) (pycor)] of one-of patches with [name = [name] of myself]
+        set label ""
+        setxy first home-location last home-location
+      ]
+    ]
+  ]
+end
+
 to setup
   ca
   file-close-all
-  file-open "formatted_stations.csv"
+  read-regions
   read-station-csv
+
   set day 0
+  set total-population 10000
+
+  read-population
   reset-ticks
 end
 
@@ -139,6 +211,7 @@ to spawn-trains
             set nextStation one-of ([link-neighbors] of myself) with [stationId > [stationID] of myself]
           ]
 
+
           if item 0 lineId = "S" [show lineId]
 
           set xcor first location
@@ -148,6 +221,7 @@ to spawn-trains
           set size 3
 
           ask myself [set timeOfLastTrain minute]
+
 
         ]
 
@@ -186,7 +260,7 @@ end
 to move-trains
   ask trains [
     ;; check if arrived at station and so if the next station should be set
-    if [xcor] of nextStation = xcor and [ycor] of nextStation = ycor [
+    if abs ([xcor] of nextStation - xcor) < 1 and abs ([ycor] of nextStation - ycor) < 1 [
       set stationId [stationId] of nextStation
 
       ;;if lineId = "PW" or lineId = "PE" or lineId = "SW" or lineId = "SE" [show (list "LRT" direction lineId)]
@@ -206,10 +280,11 @@ to move-trains
     ;; check whether nextStation exists and as such if we are at a terminus
     ifelse nextStation != nobody [
       ;; update heading and go towards nextStation by 1 or the distance left to the station, whatever is larger
-      set heading towards nextStation
+      ;;set heading towards nextStation
+      face nextStation
       fd 1
-      if round xcor = [xcor] of nextStation and round ycor = [ycor] of nextStation [
-        setxy round xcor round ycor
+      if abs (xcor - [xcor] of nextStation) < 1 and abs (ycor - [ycor] of nextStation) < 1 [
+        setxy [xcor] of nextStation [ycor] of nextStation
       ]
     ]
     [
@@ -230,15 +305,23 @@ end
 to-report back-time-in-day [time]
   report (time - 180) mod 1440
 end
+
+to-report get-val-from-cdf [prob probs]
+  let i 0
+  while [i < length probs and prob > item i probs] [
+    set i i + 1
+  ]
+  report i - 1
+end
 @#$#@#$#@
 GRAPHICS-WINDOW
-210
+153
 10
-1228
-1029
+1613
+991
 -1
 -1
-10.0
+12.0
 1
 10
 1
@@ -248,10 +331,10 @@ GRAPHICS-WINDOW
 1
 1
 1
--50
-50
--50
-50
+-60
+60
+-40
+40
 0
 0
 1
