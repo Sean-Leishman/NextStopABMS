@@ -5,7 +5,7 @@
 
 extensions [csv gis]
 
-globals [day minute total-population rg-features]
+globals [in-setup? day minute total-population rg-features patch-per-km]
 
 breed [stations station]
 breed [trains train]
@@ -25,8 +25,8 @@ breed [residents resident]
 ;; nextStationId - stationId of next station
 ;; timeOfLastTrain - minute last train was spawned at terminus
 
-stations-own [id location latLonLocation lineId stationId nextStationId prevStationId isTerminus? firstIncTrainTime firstWeekDayIncTrainTime lastIncTrainTime firstDecTrainTime firstWeekDayDecTrainTime lastDecTrainTime firstSunIncTrainTime firstSunDecTrainTime timeOfLastTrain]
-trains-own [id location nextStation stationId lineId direction popCount popList capacity]
+stations-own [id location trainInterval latLonLocation lineId stationId nextStationId prevStationId isTerminus? firstIncTrainTime firstWeekDayIncTrainTime lastIncTrainTime firstDecTrainTime firstWeekDayDecTrainTime lastDecTrainTime firstSunIncTrainTime firstSunDecTrainTime timeOfLastTrain]
+trains-own [id location nextStation stationId lineId direction popCount popList capacity isLastTrain? isFirstTrain?]
 
 patches-own [random-n centroid name]
 regions-own [region-name population age-dist]
@@ -77,6 +77,10 @@ to read-station-csv
 
       set firstIncTrainTime firstWeekDayIncTrainTime
       set firstDecTrainTime firstWeekDayDecTrainTime
+
+      set trainInterval 12
+
+      set shape "circle"
     ]
   ]
   ask stations [
@@ -99,16 +103,22 @@ to read-regions
 
   set rg-features gis:load-dataset "data/mygeodata_merged.shp"
   gis:set-world-envelope gis:envelope-of rg-features
-  gis:set-world-envelope-ds (list (item 0 gis:envelope-of rg-features + 0.01) (item 1 gis:envelope-of rg-features - 0.01) (item 2 gis:envelope-of rg-features + 0.001) (item 3 gis:envelope-of rg-features - 0.001))
+  gis:set-world-envelope (list (item 0 gis:envelope-of rg-features + 0.01) (item 1 gis:envelope-of rg-features - 0.01) (item 2 gis:envelope-of rg-features + 0.001) (item 3 gis:envelope-of rg-features - 0.001))
+
+  let world-hyp 67
+  let map-hyp sqrt ((max-pxcor - min-pxcor) ^ 2 + (max-pycor - min-pycor) ^ 2)
+
+  set patch-per-km (map-hyp / world-hyp)
 
   let i 1
   foreach gis:feature-list-of rg-features [feature ->
 
     create-regions 1 [
-      setxy item 0 gis:location-of gis:centroid-of feature item 1 gis:location-of gis:centroid-of feature
-      set label gis:property-value feature "PLN_AREA_N"
+      ;;setxy item 0 gis:location-of gis:centroid-of feature item 1 gis:location-of gis:centroid-of feature
+      ;;set label gis:property-value feature "PLN_AREA_N"
       set region-name gis:property-value feature "PLN_AREA_N"
-      set shape "circle"
+      set size 0
+      ;;set shape "circle"
     ]
 
     ask patches gis:intersecting feature [
@@ -130,7 +140,6 @@ to read-population
   while [not file-at-end?] [
     let data csv:from-row file-read-line
 
-    show [name] of patches with [name = item 0 data]
     let reg regions with [name = item 0 data]
     ask reg [
       set population item 1 data * total-population
@@ -159,11 +168,26 @@ to setup
   set day 0
   set total-population 10000
 
-  read-population
+  ;;read-population
   reset-ticks
+
+  let i ticks
+  set day 5
+  while [ticks < i + (60 * 48)][
+    set in-setup? true
+    go-loop
+  ]
+
+  set day 0
+
 end
 
 to go
+  set in-setup? false
+  go-loop
+end
+
+to go-loop
   ;; update minute - minutes are set to be in range [180,1620] as we offset minutes by 3 hours such that times are set with zero values of 0300
   set minute minute-in-day ticks
 
@@ -195,7 +219,7 @@ to spawn-trains
     ;; pick stations where trains are going backwards ie. from DT24 -> DT23 -> ... -> DT1
     if firstDecTrainTime != "" and firstDecTrainTime > 0 [
       ;; check if: current time is past the spawn time and the last train is was more than x minutes ago and the current time does not exceed the last train time
-      if minute >= firstDecTrainTime and (minute - timeOfLastTrain >= 12 or minute - timeOfLastTrain < 0) and (minute <= lastDecTrainTime)[
+      if minute >= firstDecTrainTime and (minute - timeOfLastTrain >= trainInterval or minute - timeOfLastTrain < 0) and (minute <= lastDecTrainTime)[
         ;;show (list "hatch" lineId stationId firstDecTrainTime)
         hatch-trains 1 [
           set location [location] of myself
@@ -211,17 +235,18 @@ to spawn-trains
             set nextStation one-of ([link-neighbors] of myself) with [stationId > [stationID] of myself]
           ]
 
-
-          if item 0 lineId = "S" [show lineId]
-
           set xcor first location
           set ycor last location
 
-          set shape "airplane"
-          set size 3
+          set size 2
+
+          set isFirstTrain? false
+          set isLastTrain? false
+
+          if minute = [firstDecTrainTime] of myself [set isFirstTrain? true]
+          if minute > [lastDecTrainTime] of myself - [trainInterval] of myself [set isLastTrain? true]
 
           ask myself [set timeOfLastTrain minute]
-
 
         ]
 
@@ -230,7 +255,7 @@ to spawn-trains
     ;; pick stations where trains are going upwards ie. from DT1 -> DT2 -> ... -> DT30
     if firstIncTrainTime != "" and firstIncTrainTime > 0 [
       ;; check if: current time is past the spawn time and the last train is was more than x minutes ago and the current time does not exceed the last train time
-      if minute >= firstIncTrainTime and (minute - timeOfLastTrain >= 12 or minute - timeOfLastTrain < 0) and (minute <= lastIncTrainTime) [
+      if minute >= firstIncTrainTime and (minute - timeOfLastTrain >= trainInterval or minute - timeOfLastTrain < 0) and (minute <= lastIncTrainTime) [
         ;;show (list "hatch2" lineId stationId firstIncTrainTime)
         hatch-trains 1 [
           ;;show "hatch2"
@@ -246,8 +271,13 @@ to spawn-trains
           set xcor first location
           set ycor last location
 
-          set shape "airplane"
-          set size 3
+          set size 2
+
+          set isFirstTrain? false
+          set isLastTrain? false
+
+          if minute = [firstIncTrainTime] of myself [set isFirstTrain? true]
+          if minute > [lastIncTrainTime] of myself - [trainInterval] of myself [set isLastTrain? true]
 
           ask myself [set timeOfLastTrain minute]
           ;;show list ("here") (nextStation)
@@ -284,12 +314,37 @@ to move-trains
       face nextStation
       fd 1
       if abs (xcor - [xcor] of nextStation) < 1 and abs (ycor - [ycor] of nextStation) < 1 [
+        if in-setup? [
+          setup-run
+        ]
         setxy [xcor] of nextStation [ycor] of nextStation
       ]
     ]
     [
       ;;show "die"
       die
+    ]
+  ]
+end
+
+to setup-run
+  if direction = "-" [
+    ifelse day = 6 [
+      if isFirstTrain? [ask nextStation [set firstSunDecTrainTime minute]]
+    ]
+    [
+      if isFirstTrain?  [ask nextStation [set firstWeekDayDecTrainTime minute]]
+      if isLastTrain?  [ask nextStation [set lastDecTrainTime minute]]
+    ]
+  ]
+
+  if direction = "+" [
+    ifelse day = 6 [
+      if isFirstTrain?  [ask nextStation [set firstSunIncTrainTime minute]]
+    ]
+    [
+      if isFirstTrain?  [ask nextStation [set firstWeekDayIncTrainTime minute]]
+      if isLastTrain?  [ask nextStation [set lastIncTrainTime minute]]
     ]
   ]
 end
@@ -317,11 +372,11 @@ end
 GRAPHICS-WINDOW
 153
 10
-1613
-991
+887
+505
 -1
 -1
-12.0
+6.0
 1
 10
 1
@@ -363,8 +418,8 @@ BUTTON
 11
 139
 44
-NIL
 go
+go \n
 NIL
 1
 T
@@ -380,8 +435,8 @@ BUTTON
 57
 97
 90
-NIL
 go
+go \n
 T
 1
 T
