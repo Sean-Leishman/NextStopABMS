@@ -200,7 +200,7 @@ to go-loop
 
   ;; update the day: 0 -> Monday, ... , 6 -> Sunday
   ;; allows us to update
-  if minute = 180 [
+  if minute = 360 [
     set day day + 1
     set completed-journeys 0
     if day = 6 [
@@ -382,7 +382,7 @@ to setup-run
 end
 
 to-report minute-in-day [time]
-  report (time mod 1440) + 180
+  report (time mod 2880) + 360
 end
 
 to-report convert-day-to-day-in-week [varDay]
@@ -390,7 +390,7 @@ to-report convert-day-to-day-in-week [varDay]
 end
 
 to-report back-time-in-day [time]
-  report (time - 180) mod 1440
+  report (time - 360) mod 2880
 end
 
 to-report get-val-from-cdf [prob probs]
@@ -520,7 +520,7 @@ BUTTON
 203
 211
 NIL
-while [ticks < 4140] [go]\n
+while [ticks < 8100] [go]\n
 NIL
 1
 T

@@ -26,7 +26,7 @@ breed [residents resident]
 ;; timeOfLastTrain - minute last train was spawned at terminus
 
 stations-own [id location trainInterval trainIntervals latLonLocation lineId stationId nextStationId prevStationId isTerminus? firstIncTrainTime firstWeekDayIncTrainTime lastIncTrainTime firstDecTrainTime firstWeekDayDecTrainTime lastDecTrainTime firstSunIncTrainTime firstSunDecTrainTime timeOfLastTrain timeSinceLastTrain]
-trains-own [id speed location nextStation stationObj stationId lineId direction popCount popList capacity isLastTrain? isFirstTrain? isWaiting?]
+trains-own [id speed location nextStation stationObj stationId lineId direction popCount popList capacity isLastTrain? isFirstTrain? isWaiting? waitingTicks timeToWait]
 
 patches-own [random-n centroid name]
 regions-own [region-name population age-dist]
@@ -200,7 +200,7 @@ to go-loop
 
   ;; update the day: 0 -> Monday, ... , 6 -> Sunday
   ;; allows us to update
-  if minute = 180 [
+  if minute = 360 [
     set day day + 1
     set completed-journeys 0
     if day = 6 [
@@ -382,7 +382,7 @@ to setup-run
 end
 
 to-report minute-in-day [time]
-  report (time mod 1440) + 180
+  report (time mod 2880) + 360
 end
 
 to-report convert-day-to-day-in-week [varDay]
@@ -390,7 +390,7 @@ to-report convert-day-to-day-in-week [varDay]
 end
 
 to-report back-time-in-day [time]
-  report (time - 180) mod 1440
+  report (time - 360) mod 2880
 end
 
 to-report get-val-from-cdf [prob probs]
@@ -520,7 +520,7 @@ BUTTON
 203
 211
 NIL
-while [ticks < 4140] [go]\n
+while [ticks < 8100] [go]\n
 NIL
 1
 T
@@ -606,6 +606,39 @@ PENS
 "pen-2" 1.0 0 -2674135 true "" "plot count trains with [lineId = \"NS\"]"
 "pen-3" 1.0 0 -8630108 true "" "plot count trains with [lineId = \"NE\"]"
 "pen-4" 1.0 0 -955883 true "" "plot count trains with [lineId = \"CC\"]"
+
+PLOT
+1116
+207
+1316
+357
+plot 4
+NIL
+NIL
+0.0
+10.0
+0.0
+10.0
+true
+false
+"" ""
+PENS
+"default" 1.0 0 -16777216 true "" "plot count turtles"
+
+SLIDER
+32
+276
+204
+309
+waitingTime
+waitingTime
+0
+100
+50.0
+1
+1
+NIL
+HORIZONTAL
 
 @#$#@#$#@
 ## WHAT IS IT?
