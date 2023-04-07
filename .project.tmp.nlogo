@@ -5,7 +5,7 @@
 
 extensions [csv gis]
 
-globals [in-setup? day minute total-population rg-features patch-per-km]
+globals [in-setup? day minute total-population rg-features patch-per-km peak-times completed-journeys]
 
 breed [stations station]
 breed [trains train]
@@ -25,8 +25,8 @@ breed [residents resident]
 ;; nextStationId - stationId of next station
 ;; timeOfLastTrain - minute last train was spawned at terminus
 
-stations-own [id location trainInterval latLonLocation lineId stationId nextStationId prevStationId isTerminus? firstIncTrainTime firstWeekDayIncTrainTime lastIncTrainTime firstDecTrainTime firstWeekDayDecTrainTime lastDecTrainTime firstSunIncTrainTime firstSunDecTrainTime timeOfLastTrain]
-trains-own [id location nextStation stationId lineId direction popCount popList capacity isLastTrain? isFirstTrain?]
+stations-own [id location trainInterval trainIntervals latLonLocation lineId stationId nextStationId prevStationId isTerminus? firstIncTrainTime firstWeekDayIncTrainTime lastIncTrainTime firstDecTrainTime firstWeekDayDecTrainTime lastDecTrainTime firstSunIncTrainTime firstSunDecTrainTime timeOfLastTrain timeSinceLastTrain]
+trains-own [id speed location nextStation stationObj stationId lineId direction popCount popList capacity isLastTrain? isFirstTrain? isWaiting?]
 
 patches-own [random-n centroid name]
 regions-own [region-name population age-dist]
@@ -39,7 +39,7 @@ to read-station-csv
   let data csv:from-row file-read-line
   while [not file-at-end?] [
     set data csv:from-row file-read-line
-
+    if not member? item 16 data ["PE" "BP" "SE" "PW" "SW"] [
     create-stations 1 [
       set id last data
       ;;set location list (item 4 data) (item 5 data)
@@ -78,7 +78,8 @@ to read-station-csv
       set firstIncTrainTime firstWeekDayIncTrainTime
       set firstDecTrainTime firstWeekDayDecTrainTime
 
-      set trainInterval 12
+      set trainIntervals list (4) (6)
+      set timeSinceLastTrain (list 0 0)
 
       set shape "circle"
     ]
@@ -95,6 +96,7 @@ to read-station-csv
     ]
 
   ]
+  ]
 end
 
 to read-regions
@@ -107,7 +109,7 @@ to read-regions
 
   let world-hyp 67
   let map-hyp sqrt ((max-pxcor - min-pxcor) ^ 2 + (max-pycor - min-pycor) ^ 2)
-  show (list (world-hyp) (map-hyp))
+
   set patch-per-km (map-hyp / world-hyp)
 
   let i 1
@@ -140,7 +142,6 @@ to read-population
   while [not file-at-end?] [
     let data csv:from-row file-read-line
 
-    show [name] of patches with [name = item 0 data]
     let reg regions with [name = item 0 data]
     ask reg [
       set population item 1 data * total-population
@@ -168,6 +169,7 @@ to setup
 
   set day 0
   set total-population 10000
+  set peak-times (list (list 420 570) (list 1020 1200))
 
   ;;read-population
   reset-ticks
@@ -183,6 +185,10 @@ to setup
 
 end
 
+to-report is-peak-time? [time]
+  report (time > (item 0 (item 0 peak-times)) and time < item 1 (item 0 peak-times)) or (time > item 0 (item 1 peak-times) and time < item 1 (item 1 peak-times))
+end
+
 to go
   set in-setup? false
   go-loop
@@ -196,6 +202,7 @@ to go-loop
   ;; allows us to update
   if minute = 180 [
     set day day + 1
+    set completed-journeys 0
     if day = 6 [
       ask stations [
         set firstIncTrainTime firstSunIncTrainTime
@@ -210,7 +217,16 @@ to go-loop
       ]
     ]
   ]
+  ask stations [
+    ifelse is-peak-time? minute [
+      set trainInterval item 0 trainIntervals
+    ]
+    [
+      set trainInterval item 1 trainIntervals
+    ]
+  ]
   spawn-trains
+  ask stations [set timeSinceLastTrain (list (1 + item 0 timeSinceLastTrain) (item 1 timeSinceLastTrain + 1))]
   move-trains
   tick
 end
@@ -226,6 +242,7 @@ to spawn-trains
           set location [location] of myself
           set lineId [lineId] of myself
           set stationId [stationId] of myself
+          set stationObj myself
 
           ;; set direction to go down the line
           set direction "-"
@@ -236,18 +253,20 @@ to spawn-trains
             set nextStation one-of ([link-neighbors] of myself) with [stationId > [stationID] of myself]
           ]
 
-          if item 0 lineId = "S" [show lineId]
-
           set xcor first location
           set ycor last location
 
           set size 2
+          ;; Assume speedis 60km hr^-1 = 1 km min -1
+          set speed patch-per-km
 
           set isFirstTrain? false
-          set isLastTrain? falseset size 10
+          set isLastTrain? false
 
-          if minute = [firstDecTrainTime] of myself [set isFirstTrain? true set color green  set size 10]
-          if minute > [lastDecTrainTime] of myself - [trainInterval] of myself [set isLastTrain? true set color blue set size 10]
+          set isWaiting? false
+
+          if minute = [firstDecTrainTime] of myself [set isFirstTrain? true]
+          if minute > [lastDecTrainTime] of myself - [trainInterval] of myself [set isLastTrain? true]
 
           ask myself [set timeOfLastTrain minute]
 
@@ -265,6 +284,7 @@ to spawn-trains
           set location [location] of myself
           set lineId [lineId] of myself
           set stationId [stationId] of myself
+          set stationObj myself
 
           ;; set direction to go up the line
           set direction "+"
@@ -279,8 +299,10 @@ to spawn-trains
           set isFirstTrain? false
           set isLastTrain? false
 
-          if minute = [firstIncTrainTime] of myself [set isFirstTrain? true set color green  set size 10]
-          if minute > [lastIncTrainTime] of myself - [trainInterval] of myself [set isLastTrain? true set color blue set size 10]
+          set isWaiting? false
+
+          if minute = [firstIncTrainTime] of myself [set isFirstTrain? true]
+          if minute > [lastIncTrainTime] of myself - [trainInterval] of myself [set isLastTrain? true]
 
           ask myself [set timeOfLastTrain minute]
           ;;show list ("here") (nextStation)
@@ -293,40 +315,47 @@ end
 to move-trains
   ask trains [
     ;; check if arrived at station and so if the next station should be set
-    if abs ([xcor] of nextStation - xcor) < 1 and abs ([ycor] of nextStation - ycor) < 1 [
-      set stationId [stationId] of nextStation
+    ifelse isWaiting? [
+      set isWaiting? false
+      if direction = "-" [ask stationObj [set timeSinceLastTrain replace-item 0 timeSinceLastTrain 0]]
+      if direction = "+" [ask stationObj [set timeSinceLastTrain replace-item 1 timeSinceLastTrain 0]]
+    ][
 
-      ;;if lineId = "PW" or lineId = "PE" or lineId = "SW" or lineId = "SE" [show (list "LRT" direction lineId)]
-      ;;if lineId = "PX" or lineId = "PF" or lineId = "SX" or lineId = "SF" [show (list "LRT2" direction lineId)]
-
-      ifelse direction = "+" [
-        set nextStation one-of ([link-neighbors] of nextStation) with [stationId > [stationID] of myself]
-      ]
-      [
-        ifelse lineId = "SF" or lineId = "SX" or lineId = "PF" or lineId = "PX"
-        [set nextStation max-one-of ([link-neighbors] of nextStation) with [stationId < [stationID] of myself] [stationId]]
-        [set nextStation one-of ([link-neighbors] of nextStation) with [stationId < [stationID] of myself]]
-      ]
-
-    ]
-
-    ;; check whether nextStation exists and as such if we are at a terminus
     ifelse nextStation != nobody [
-      ;; update heading and go towards nextStation by 1 or the distance left to the station, whatever is larger
-      ;;set heading towards nextStation
-      face nextStation
-      fd 1
-      if abs (xcor - [xcor] of nextStation) < 1 and abs (ycor - [ycor] of nextStation) < 1 [
+      ifelse abs ([xcor] of nextStation - xcor) < 1 and abs ([ycor] of nextStation - ycor) < 1 [
+        set stationObj nextStation
+        set stationId [stationId] of nextStation
+        setxy [xcor] of nextStation [ycor] of nextStation
+
+        set isWaiting? True
+
+        ;;if lineId = "PW" or lineId = "PE" or lineId = "SW" or lineId = "SE" [show (list "LRT" direction lineId)]
+        ;;if lineId = "PX" or lineId = "PF" or lineId = "SX" or lineId = "SF" [show (list "LRT2" direction lineId)]
+
         if in-setup? [
           setup-run
         ]
-        setxy [xcor] of nextStation [ycor] of nextStation
+
+        ifelse direction = "+" [
+          set nextStation one-of ([link-neighbors] of nextStation) with [stationId > [stationID] of myself]
+        ]
+        [
+          ifelse lineId = "SF" or lineId = "SX" or lineId = "PF" or lineId = "PX"
+          [set nextStation max-one-of ([link-neighbors] of nextStation) with [stationId < [stationID] of myself] [stationId]]
+          [set nextStation one-of ([link-neighbors] of nextStation) with [stationId < [stationID] of myself]]
+        ]
+      ]
+      [
+        face nextStation
+        fd 0.5
       ]
     ]
     [
-      ;;show "die"
+      set completed-journeys completed-journeys + 1
       die
     ]
+
+  ]
   ]
 end
 
@@ -467,6 +496,116 @@ false
 "" ""
 PENS
 "default" 1.0 0 -2674135 true "" "plot count trains with [lineId = \"NS\"]"
+
+BUTTON
+25
+128
+279
+161
+NIL
+while [minute-in-day ticks != 310][go]
+NIL
+1
+T
+OBSERVER
+NIL
+NIL
+NIL
+NIL
+1
+
+BUTTON
+28
+178
+203
+211
+NIL
+while [ticks < 4140] [go]\n
+NIL
+1
+T
+OBSERVER
+NIL
+NIL
+NIL
+NIL
+1
+
+PLOT
+891
+10
+1091
+160
+f
+NIL
+NIL
+0.0
+10.0
+0.0
+10.0
+true
+false
+"" ""
+PENS
+"default" 1.0 0 -16777216 true "" "plot completed-journeys"
+
+PLOT
+908
+204
+1108
+354
+plot 1
+NIL
+NIL
+3.0
+25.0
+0.0
+20.0
+false
+false
+"" ""
+PENS
+"pen-0" 1.0 1 -13791810 true "" "plotxy ticks / 60 item 0 item 0 [timeSinceLastTrain] of stations with [lineId = \"NS\" and stationId = 10]"
+
+PLOT
+900
+335
+1100
+485
+plot 2
+NIL
+NIL
+0.0
+10.0
+0.0
+10.0
+true
+false
+"" ""
+PENS
+"default" 1.0 1 -16777216 true "" "histogram [timeSinceLastTrain] of stations\n"
+
+PLOT
+1105
+14
+1305
+164
+plot 3
+NIL
+NIL
+0.0
+10.0
+0.0
+10.0
+true
+false
+"" ""
+PENS
+"default" 1.0 0 -10899396 true "" "plot count trains with [lineId = \"EW\"]"
+"pen-1" 1.0 0 -13791810 true "" "plot count trains with [lineId = \"DT\"]"
+"pen-2" 1.0 0 -2674135 true "" "plot count trains with [lineId = \"NS\"]"
+"pen-3" 1.0 0 -8630108 true "" "plot count trains with [lineId = \"NE\"]"
+"pen-4" 1.0 0 -955883 true "" "plot count trains with [lineId = \"CC\"]"
 
 @#$#@#$#@
 ## WHAT IS IT?
