@@ -3,9 +3,9 @@
 
 
 
-extensions [csv gis]
+extensions [csv gis table]
 
-globals [in-setup? day minute total-population rg-features patch-per-km peak-times completed-journeys]
+globals [in-setup? day minute ticks-per-hour total-population rg-features patch-per-km peak-times completed-journeys]
 
 breed [stations station]
 breed [trains train]
@@ -25,13 +25,61 @@ breed [residents resident]
 ;; nextStationId - stationId of next station
 ;; timeOfLastTrain - minute last train was spawned at terminus
 
-stations-own [id location trainInterval trainIntervals latLonLocation lineId stationId nextStationId prevStationId isTerminus? firstIncTrainTime firstWeekDayIncTrainTime lastIncTrainTime firstDecTrainTime firstWeekDayDecTrainTime lastDecTrainTime firstSunIncTrainTime firstSunDecTrainTime timeOfLastTrain timeSinceLastTrain]
-trains-own [id speed location nextStation stationObj stationId lineId direction popCount popList capacity isLastTrain? isFirstTrain? isWaiting?]
+stations-own [id location trainInterval trainIntervals latLonLocation lineId stationId nextStationId prevStationId isTerminus? dest-dict volume-dict firstIncTrainTime firstWeekDayIncTrainTime lastIncTrainTime firstDecTrainTime firstWeekDayDecTrainTime lastDecTrainTime firstSunIncTrainTime firstSunDecTrainTime timeOfLastTrain timeSinceLastTrain connections stn-no train_at]
+trains-own [id speed location nextStation stationObj stationId lineId direction popCount popList capacity isLastTrain? isFirstTrain? isWaiting? waitingTicks timeToWait]
 
 patches-own [random-n centroid name]
 regions-own [region-name population age-dist]
 
 residents-own [age life-type income home-location work-location]
+
+to read-prob-dist
+  file-open "data/prob_trip.csv"
+  let prob_data csv:from-row file-read-line
+  let temp-id 0
+  let last-idx 0
+  let stas []
+
+  show "step"
+  while [not file-at-end?][
+    set prob_data csv:from-row file-read-line
+    set temp-id item 3 prob_data
+    set last-idx 0
+    set stas []
+    foreach range length temp-id [a -> if item a temp-id = "/" [set stas lput substring temp-id last-idx a stas
+      set last-idx a + 1
+      ]]
+    set stas lput substring temp-id last-idx length temp-id stas
+
+    foreach stas [s ->
+      ask stations with [id = s][
+        set connections stas
+        table:put dest-dict (word item 1 prob_data "|" item 2 prob_data "|" item 4 prob_data) item 5 prob_data
+      ]
+    ]
+  ]
+  file-close
+end
+
+to read-station-volume
+  let file-path "data/passenger_vol.csv"
+  file-open file-path
+  let data csv:from-row file-read-line
+  while [not file-at-end?] [
+    set data csv:from-row file-read-line
+
+    let stas []
+    let last-idx 0
+    foreach range length (item 5 data) [a -> if item a (item 5 data) = "/" [set stas lput substring (item 5 data) last-idx a stas
+      set last-idx a + 1
+      ]]
+    set stas lput substring (item 5 data) last-idx length (item 5 data) stas
+
+    let key (word (item 2 data) "|" (item 3 data))
+    ask stations with [connections = stas] [table:put volume-dict key (item 6 data)]
+  ]
+
+end
 
 to read-station-csv
   file-open "data/formatted_stations.csv"
@@ -47,6 +95,8 @@ to read-station-csv
 
       set lineId item 16 data
       set stationId item 17 data
+      set id word lineId stationId
+      set connections (list id)
 
       if lineId = "NE" [set color violet]
       if lineId = "NS" [set color red]
@@ -68,12 +118,12 @@ to read-station-csv
       set prevStationId item 20 data
 
       set isTerminus? item 9 data
-      set firstWeekDayIncTrainTime item 10 data
-      set firstSunIncTrainTime item 11 data
-      set lastIncTrainTime item 12 data
-      set firstWeekDayDecTrainTime item 13 data
-      set firstSunDecTrainTime item 14 data
-      set lastDecTrainTime item 15 data
+      set firstWeekDayIncTrainTime item 10 data ;;* ticks-per-hour / 60
+      set firstSunIncTrainTime item 11 data ;;* ticks-per-hour / 60
+      set lastIncTrainTime item 12 data ;;* ticks-per-hour / 60
+      set firstWeekDayDecTrainTime item 13 data ;;* ticks-per-hour / 60
+      set firstSunDecTrainTime item 14 data ;;* ticks-per-hour / 60
+      set lastDecTrainTime item 15 data ;;* ticks-per-hour / 60
 
       set firstIncTrainTime firstWeekDayIncTrainTime
       set firstDecTrainTime firstWeekDayDecTrainTime
@@ -82,6 +132,8 @@ to read-station-csv
       set timeSinceLastTrain (list 0 0)
 
       set shape "circle"
+
+      set stn-no item 3 data
     ]
   ]
   ask stations [
@@ -94,9 +146,14 @@ to read-station-csv
     [
       create-links-with other stations with [lineId = [lineId] of myself and stationId = [nextStationId] of myself]
     ]
+    set dest-dict table:make
+    set volume-dict table:make
+  ]
+  ]
 
-  ]
-  ]
+  file-close
+
+  ;;read-prob-dist
 end
 
 to read-regions
@@ -164,22 +221,26 @@ end
 to setup
   ca
   file-close-all
-  read-regions
-  read-station-csv
-
   set day 0
   set total-population 10000
   set peak-times (list (list 420 570) (list 1020 1200))
+  set ticks-per-hour 120
+
+  read-regions
+  read-station-csv
+  read-prob-dist
+  read-station-volume
 
   ;;read-population
   reset-ticks
 
   let i ticks
   set day 5
-  while [ticks < i + (60 * 48)][
+  while [ticks < i + (ticks-per-hour * 48)][
     set in-setup? true
     go-loop
   ]
+  reset-ticks
 
   set day 0
 
@@ -200,7 +261,7 @@ to go-loop
 
   ;; update the day: 0 -> Monday, ... , 6 -> Sunday
   ;; allows us to update
-  if minute = 360 [
+  if minute = 3 * ticks-per-hour [
     set day day + 1
     set completed-journeys 0
     if day = 6 [
@@ -227,6 +288,8 @@ to go-loop
   ]
   spawn-trains
   ask stations [set timeSinceLastTrain (list (1 + item 0 timeSinceLastTrain) (item 1 timeSinceLastTrain + 1))]
+  generate-residents
+  connect-resident-to-train
   move-trains
   tick
 end
@@ -236,7 +299,7 @@ to spawn-trains
     ;; pick stations where trains are going backwards ie. from DT24 -> DT23 -> ... -> DT1
     if firstDecTrainTime != "" and firstDecTrainTime > 0 [
       ;; check if: current time is past the spawn time and the last train is was more than x minutes ago and the current time does not exceed the last train time
-      if minute >= firstDecTrainTime and (minute - timeOfLastTrain >= trainInterval or minute - timeOfLastTrain < 0) and (minute <= lastDecTrainTime)[
+      if minute >= (firstDecTrainTime + offsetTrainStartTime) and (minute - timeOfLastTrain >= trainInterval or minute - timeOfLastTrain < 0) and (minute <= (lastDecTrainTime + offsetTrainEndTime))[
         ;;show (list "hatch" lineId stationId firstDecTrainTime)
         hatch-trains 1 [
           set location [location] of myself
@@ -248,10 +311,6 @@ to spawn-trains
           set direction "-"
           ;; pick the neighboring station that is down the line
           set nextStation one-of ([link-neighbors] of myself) with [stationId < [stationID] of myself]
-
-          if item 1 lineId = "X" or item 1 lineId = "F" [
-            set nextStation one-of ([link-neighbors] of myself) with [stationId > [stationID] of myself]
-          ]
 
           set xcor first location
           set ycor last location
@@ -277,7 +336,7 @@ to spawn-trains
     ;; pick stations where trains are going upwards ie. from DT1 -> DT2 -> ... -> DT30
     if firstIncTrainTime != "" and firstIncTrainTime > 0 [
       ;; check if: current time is past the spawn time and the last train is was more than x minutes ago and the current time does not exceed the last train time
-      if minute >= firstIncTrainTime and (minute - timeOfLastTrain >= trainInterval or minute - timeOfLastTrain < 0) and (minute <= lastIncTrainTime) [
+      if minute >= (firstIncTrainTime + offsetTrainStartTime) and (minute - timeOfLastTrain >= trainInterval or minute - timeOfLastTrain < 0) and (minute <= (lastIncTrainTime + offsetTrainEndTime)) [
         ;;show (list "hatch2" lineId stationId firstIncTrainTime)
         hatch-trains 1 [
           ;;show "hatch2"
@@ -295,6 +354,8 @@ to spawn-trains
           set ycor last location
 
           set size 2
+          ;; Assume speedis 60km hr^-1 = 1 km min -1
+          set speed patch-per-km
 
           set isFirstTrain? false
           set isLastTrain? false
@@ -317,6 +378,7 @@ to move-trains
     ;; check if arrived at station and so if the next station should be set
     ifelse isWaiting? [
       set isWaiting? false
+      ask stationObj [set train_at false]
       if direction = "-" [ask stationObj [set timeSinceLastTrain replace-item 0 timeSinceLastTrain 0]]
       if direction = "+" [ask stationObj [set timeSinceLastTrain replace-item 1 timeSinceLastTrain 0]]
     ][
@@ -328,6 +390,7 @@ to move-trains
         setxy [xcor] of nextStation [ycor] of nextStation
 
         set isWaiting? True
+        ask stationObj [set train_at true]
 
         ;;if lineId = "PW" or lineId = "PE" or lineId = "SW" or lineId = "SE" [show (list "LRT" direction lineId)]
         ;;if lineId = "PX" or lineId = "PF" or lineId = "SX" or lineId = "SF" [show (list "LRT2" direction lineId)]
@@ -347,7 +410,8 @@ to move-trains
       ]
       [
         face nextStation
-        fd 0.5
+         fd 0.5
+        ;;fd speed * speedMultiplier
       ]
     ]
     [
@@ -362,21 +426,21 @@ end
 to setup-run
   if direction = "-" [
     ifelse day = 6 [
-      if isFirstTrain? [ask nextStation [set firstSunDecTrainTime minute]]
+      if isFirstTrain? [ask nextStation with [isTerminus? false] [set firstSunDecTrainTime minute]]
     ]
     [
-      if isFirstTrain?  [ask nextStation [set firstWeekDayDecTrainTime minute]]
-      if isLastTrain?  [ask nextStation [set lastDecTrainTime minute]]
+      if isFirstTrain?  [ask nextStation with [isTerminus? false] [set firstWeekDayDecTrainTime minute]]
+      if isLastTrain?  [ask nextStation with [isTerminus? false] [set lastDecTrainTime minute]]
     ]
   ]
 
   if direction = "+" [
     ifelse day = 6 [
-      if isFirstTrain?  [ask nextStation [set firstSunIncTrainTime minute]]
+      if isFirstTrain?  [ask nextStation with [isTerminus? false] [set firstSunIncTrainTime minute]]
     ]
     [
-      if isFirstTrain?  [ask nextStation [set firstWeekDayIncTrainTime minute]]
-      if isLastTrain?  [ask nextStation [set lastIncTrainTime minute]]
+      if isFirstTrain?  [ask nextStation with [isTerminus? false] [set firstWeekDayIncTrainTime minute]]
+      if isLastTrain?  [ask nextStation with [isTerminus? false] [set lastIncTrainTime minute]]
     ]
   ]
 end
@@ -400,15 +464,37 @@ to-report get-val-from-cdf [prob probs]
   ]
   report i - 1
 end
+
+to generate-residents
+  ;; summary: residents spawn at each station throughout the day based on "passenger vol by train stations" data (from LTA DataMall)
+  ;; NOTE: (a) we will be using tap-in-vol data, (b) each agent represents 1000 people, (c) agents will spawn at hour 0, 5, 6, 7, ... 23
+  ;; KEY VARIABLES NEEDED: (a) time, (b) weekday/weekend, (c) stn-no
+
+  if in-setup? = false [
+    let time floor(minute / 120)
+    ;; open file - based on type of day (i.e., weekend or weekday)
+    ifelse day > 5 [
+  ][]]
+end
+
+to connect-resident-to-train
+  ask stations [
+    if train_at = true [
+      ask residents [
+        create-links-with trains in-radius 0 [tie]
+      ]
+    ]
+  ]
+end
 @#$#@#$#@
 GRAPHICS-WINDOW
 153
 10
-887
-505
+1008
+586
 -1
 -1
-6.0
+7.0
 1
 10
 1
@@ -446,10 +532,10 @@ NIL
 1
 
 BUTTON
-76
-11
-139
-44
+96
+58
+159
+91
 go
 go \n
 NIL
@@ -520,7 +606,7 @@ BUTTON
 203
 211
 NIL
-while [ticks < 8100] [go]\n
+while [ticks < 2700] [go]\n
 NIL
 1
 T
@@ -624,6 +710,109 @@ false
 "" ""
 PENS
 "default" 1.0 0 -16777216 true "" "plot count turtles"
+
+PLOT
+1112
+456
+1312
+606
+num of ppl
+NIL
+NIL
+0.0
+10.0
+0.0
+10.0
+true
+false
+"" ""
+PENS
+"default" 1.0 0 -16777216 true "" "plot count residents"
+
+MONITOR
+44
+489
+145
+534
+NIL
+count residents
+17
+1
+11
+
+MONITOR
+495
+616
+552
+661
+NIL
+minute
+17
+1
+11
+
+SLIDER
+19
+232
+191
+265
+offsetTrainStartTime
+offsetTrainStartTime
+-50
+50
+0.0
+1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+14
+281
+186
+314
+offsetTrainEndTime
+offsetTrainEndTime
+-50
+50
+0.0
+1
+1
+NIL
+HORIZONTAL
+
+MONITOR
+272
+613
+393
+658
+hour
+floor (minute / 120)
+17
+1
+11
+
+MONITOR
+411
+618
+489
+663
+real minute
+(minute mod 120) / 2
+17
+1
+11
+
+MONITOR
+172
+612
+229
+657
+NIL
+day
+17
+1
+11
 
 @#$#@#$#@
 ## WHAT IS IT?
