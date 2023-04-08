@@ -25,13 +25,13 @@ breed [residents resident]
 ;; nextStationId - stationId of next station
 ;; timeOfLastTrain - minute last train was spawned at terminus
 
-stations-own [id location trainInterval trainIntervals latLonLocation lineId stationId nextStationId prevStationId isTerminus? dest-dict volume-dict firstIncTrainTime firstWeekDayIncTrainTime lastIncTrainTime firstDecTrainTime firstWeekDayDecTrainTime lastDecTrainTime firstSunIncTrainTime firstSunDecTrainTime timeOfLastTrain timeSinceLastTrain connections stn-no train_at]
-trains-own [id speed location nextStation stationObj stationId lineId direction popCount popList capacity isLastTrain? isFirstTrain? isWaiting? waitingTicks timeToWait]
+stations-own [id location trainInterval trainIntervals latLonLocation lineId stationId nextStationId prevStationId isTerminus? dest-dict volume-dict firstIncTrainTime firstWeekDayIncTrainTime lastIncTrainTime firstDecTrainTime firstWeekDayDecTrainTime lastDecTrainTime firstSunIncTrainTime firstSunDecTrainTime timeOfLastTrain timeSinceLastTrain connections connectionsObjs stn-no train_at]
+trains-own [id speed location nextStation stationObj nextStationObj stationId lineId direction popCount popList capacity isLastTrain? isFirstTrain? isWaiting? waitingTicks timeToWait]
 
 patches-own [random-n centroid name]
 regions-own [region-name population age-dist]
 
-residents-own [age life-type income home-location work-location destination path nextStationObj stationObj trainObj state]
+residents-own [age life-type income home-location work-location destination path nextStationObj stationObj stationObjs nextStationObjs trainObj state]
 
 to read-prob-dist
   file-open "data/prob_trip.csv"
@@ -51,6 +51,8 @@ to read-prob-dist
       ]]
     set stas lput substring temp-id last-idx length temp-id stas
     let key (word item 1 prob_data "|" item 2 prob_data)
+
+    ask stations with [member? id stas] [set connectionsObjs stations with [member? id stas]]
 
     foreach stas [s ->
       ask stations with [id = s][
@@ -76,6 +78,7 @@ to read-journey-times
     let stationLabel item 0 jdata
     set journey-mat insert-item count1 journey-mat (sublist jdata 1 (length jdata))
     table:put station-name-map stationLabel count1
+    table:put station-name-map count1 stationLabel
     set count1 count1 + 1
   ]
   file-close
@@ -243,7 +246,7 @@ to setup
   file-close-all
   set day 0
   set total-population 10000
-  set peak-times (list (list 420 570) (list 1020 1200))
+  set peak-times (list (list 840 1140) (list 2040 2400))
   set ticks-per-hour 120
 
   read-regions
@@ -256,7 +259,7 @@ to setup
   reset-ticks
 
   let i ticks
-  set day 5
+  set day 4
   while [ticks < i + (ticks-per-hour * 48)][
     set in-setup? true
     go-loop
@@ -338,12 +341,12 @@ to spawn-trains
 
           set size 2
           ;; Assume speedis 60km hr^-1 = 1 km min -1
-          set speed patch-per-km
+          set speed patch-per-km / 2
 
           set isFirstTrain? false
           set isLastTrain? false
 
-          set isWaiting? false
+          set isWaiting? true
 
           if minute = [firstDecTrainTime] of myself [set isFirstTrain? true]
           if minute > [lastDecTrainTime] of myself - [trainInterval] of myself [set isLastTrain? true]
@@ -376,12 +379,12 @@ to spawn-trains
 
           set size 2
           ;; Assume speedis 60km hr^-1 = 1 km min -1
-          set speed patch-per-km
+          set speed patch-per-km / 2
 
           set isFirstTrain? false
           set isLastTrain? false
 
-          set isWaiting? false
+          set isWaiting? true
 
           if minute = [firstIncTrainTime] of myself [set isFirstTrain? true]
           if minute > [lastIncTrainTime] of myself - [trainInterval] of myself [set isLastTrain? true]
@@ -433,18 +436,15 @@ to move-trains
       ]
       [
         face nextStation
-         fd 0.5
-        ;;fd speed * speedMultiplier
+        fd 1
+        ;fd speed * speedMultiplier
       ]
     ]
     [
-      if lineId = "NE" [if not in-setup? [show (list "kill" self who my-links link-neighbors)]]
 
       ask link-neighbors [die]
       ask my-in-links [die]
-      if lineId = "NE" [if not in-setup? [show (list "kill" self who my-links link-neighbors)]]
       die
-      if lineId = "NE" [if not in-setup? [show (list "kill" self who my-links link-neighbors)]]
     ]
 
   ]
@@ -494,12 +494,13 @@ to-report get-val-from-cdf [prob probs]
 end
 
 to-report generate-destination [time]
-  let day-type "WEEKDAY"
-  if day >= 5 [set day-type "WEEKENDS/HOLIDAY"]
+
 
   let tempStationId reduce [[a b] -> (word a "/" b)] ([connections] of myself)
-  let key (word day-type "|" time)
 
+  let day-type "WEEKDAY"
+  if day >= 5 [set day-type "WEEKENDS/HOLIDAY"]
+  let key (word day-type "|" time)
   let destination-dict table:get [dest-dict] of myself key
   let random-val random-float 1
   let dict-list table:to-list destination-dict
@@ -516,7 +517,7 @@ to generate-residents
   ;; summary: residents spawn at each station throughout the day based on "passenger vol by train stations" data (from LTA DataMall)
   ;; NOTE: (a) we will be using tap-in-vol data, (b) each agent represents 1000 people, (c) agents will spawn at hour 0, 5, 6, 7, ... 23
   ;; KEY VARIABLES NEEDED: (a) time, (b) weekday/weekend, (c) stn-no
-
+  ;;show (list "called generate" (minute mod 120))
   if minute mod 120 = 0 and in-setup? = false [
     let time floor(minute / 120)
     ;; open file - based on type of day (i.e., weekend or weekday)
@@ -525,16 +526,24 @@ to generate-residents
 
     ask stations [
       let num-residents table:get-or-default volume-dict (word day-type "|" time) 0
-      hatch-residents round floor(num-residents / 1000) [
+      ;;show (list id "num" num-residents (word day-type "|" time))
+      hatch-residents round floor(random-normal (num-residents / 1000) (num-residents / 20000)) [
         set shape "person"
         set size 1
-        set stationObj myself
+        set stationObjs [connectionsObjs] of myself
         set destination generate-destination time
         set path get-shortest-path reduce [[a b] -> (word a "/" b)] [connections] of myself destination
-        set nextStationObj one-of stations with [item 0 path = connections]
+        set nextStationObjs one-of stations with [[item 0 path] of myself = reduce [[a b] -> (word a "/" b)] connections ]
         set state "connecting"
         set color white
 
+        ifelse nextStationObjs = nobody [
+          show (list [connectionsObjs] of myself "test")
+        ]
+        [
+          set nextStationObjs [connectionsObjs] of nextStationObjs
+        ]
+        ;;show (list stationObjs nextStationObjs)
                 ]
     ]
 
@@ -544,17 +553,22 @@ end
 to connect-resident-to-train
   ask residents [
     ifelse state = "connecting" [
-      ask trains with [isWaiting? and stationObj = [stationObj] of myself and nextStationObj = [nextStationObj] of myself][
-        set trainObj self
-        create-link-with myself [tie]
-        set state "transit"
+      set trainObj one-of trains with [nextStation != nobody and isWaiting? and member? [id] of stationObj ([[id] of stationObjs] of myself) and member? [id] of nextStation ([[id] of nextStationObjs] of myself)]
+      ifelse trainObj != nobody [
+          set state "transit"
+          create-link-with trainObj [tie]
       ]
+      [
+      ]
+      ;;show (list trainObj state [id] of stationObjs [id] of nextStationObjs )
     ][
-      ifelse state = "transit" and [isWaiting?] of trainObj and length path > 0 [
-        set stationObj one-of stations with [item 0 path = connections]
+      ifelse state = "transit" and [isWaiting?] of trainObj and length path > 1 [
+        ;;show (list state
         set path sublist path 1 length path
-        set nextStationObj one-of stations with [item 0 path = connections]
-        ifelse not [nextStationObj] of trainObj = nextStationObj [
+        set stationObjs nextStationObjs
+        set nextStationObjs [connectionsObjs] of one-of stations with [[item 0 path] of myself = reduce [[a b] -> (word a "/" b)] connections ]
+
+        ifelse [nextStation] of trainObj != nobody and not member? [[id] of nextStation] of trainObj [id] of nextStationObjs [
           set state "connecting"
           ask my-links [untie die]
         ]
@@ -563,8 +577,13 @@ to connect-resident-to-train
         ]
       ]
       [
-        set state "arrived"
-        die
+        if length path = 1 [
+          set state "arrived"
+          ask link-with trainObj [die]
+          die
+        ]
+        ;;set state "arrived"
+        ;;die
       ]
     ]
   ]
@@ -574,13 +593,17 @@ to-report get-shortest-path [stn-1 stn-2]
   let id1 table:get station-name-map stn-1
   let id2 table:get station-name-map stn-2
 
-  let spath []
-
+  let spath (list table:get station-name-map id2)
   while [id1 != id2][
     set id2 item id2 item id1 journey-mat
     set spath lput table:get station-name-map id2 spath
   ]
-  report reverse sublist spath 1 length spath
+
+  report reverse sublist spath 0 (length spath - 1)
+end
+
+to reset-without-setup
+  ask residents [die]
 end
 @#$#@#$#@
 GRAPHICS-WINDOW
@@ -685,7 +708,7 @@ BUTTON
 279
 161
 NIL
-while [minute < 120][go]
+while [floor (minute / 120) < 5][go]
 NIL
 1
 T
@@ -909,6 +932,38 @@ day
 17
 1
 11
+
+BUTTON
+33
+349
+96
+382
+reset
+reset-without-setup
+NIL
+1
+T
+OBSERVER
+NIL
+NIL
+NIL
+NIL
+1
+
+SLIDER
+19
+415
+191
+448
+speedMultiplier
+speedMultiplier
+0
+2
+1.0
+0.1
+1
+NIL
+HORIZONTAL
 
 @#$#@#$#@
 ## WHAT IS IT?
