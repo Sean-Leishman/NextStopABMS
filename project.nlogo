@@ -5,7 +5,7 @@
 
 extensions [csv gis table]
 
-globals [in-setup? day minute ticks-per-hour total-population rg-features patch-per-km peak-times completed-journeys journey-mat station-name-map]
+globals [in-setup? day minute ticks-per-hour total-population rg-features patch-per-km peak-times completed-journeys journey-mat station-name-map trips-stats trips-timings]
 
 breed [stations station]
 breed [trains train]
@@ -26,15 +26,16 @@ breed [residents resident]
 ;; timeOfLastTrain - minute last train was spawned at terminus
 
 stations-own [id location trainInterval trainIntervals latLonLocation lineId stationId nextStationId prevStationId isTerminus? dest-dict volume-dict firstIncTrainTime firstWeekDayIncTrainTime lastIncTrainTime firstDecTrainTime firstWeekDayDecTrainTime lastDecTrainTime firstSunIncTrainTime firstSunDecTrainTime timeOfLastTrain timeSinceLastTrain connections connectionsObjs stn-no train_at]
-trains-own [id speed location nextStation stationObj nextStationObj stationId lineId direction popCount popList capacity isLastTrain? isFirstTrain? isWaiting? waitingTicks timeToWait]
+trains-own [id location nextStation stationObj nextStationObj stationId lineId direction popCount popList capacity isLastTrain? isFirstTrain? isWaiting? waitingTicks timeToWait]
 
 patches-own [random-n centroid name]
 regions-own [region-name population age-dist]
 
-residents-own [age life-type income home-location work-location destination path nextStationObj stationObj stationObjs nextStationObjs trainObj state]
+residents-own [age life-type income home-location work-location destination path nextStationObj stationObj stationObjs nextStationObjs trainObj state step-in-trip]
 
 to read-prob-dist
-  file-open "data/prob_trip.csv"
+  if lines = "TE Extension" [file-open "data/prob_tripTE4.csv"]
+  if lines = "Default" [file-open "data/prob_trip.csv"]
   let prob_data csv:from-row file-read-line
   let temp-id 0
   let last-idx 0
@@ -43,6 +44,7 @@ to read-prob-dist
   show "step"
   while [not file-at-end?][
     set prob_data csv:from-row file-read-line
+    ;;show prob_data
     set temp-id item 3 prob_data
     set last-idx 0
     set stas []
@@ -68,7 +70,8 @@ to read-prob-dist
 end
 
 to read-journey-times
-  file-open "data/journey_times.csv"
+  if lines = "TE Extension" [file-open "data/journey_timesTE4.csv"]
+  if lines = "Default" [file-open "data/journey_times.csv"]
   let jdata csv:from-row file-read-line
   set journey-mat []
   set station-name-map table:make
@@ -85,7 +88,8 @@ to read-journey-times
 end
 
 to read-station-volume
-  let file-path "data/passenger_vol.csv"
+  if lines = "TE Extension" [file-open "data/passenger_volTE4.csv"]
+  if lines = "Default" [file-open "data/passenger_vol.csv"]
   file-open file-path
   let data csv:from-row file-read-line
   while [not file-at-end?] [
@@ -105,7 +109,8 @@ to read-station-volume
 end
 
 to read-station-csv
-  file-open "data/formatted_stations.csv"
+  if lines = "TE Extension" [file-open "data/formatted_stationsTE4.csv"]
+  if lines = "Default" [file-open "data/formatted_stations.csv"]
 
   let data csv:from-row file-read-line
   while [not file-at-end?] [
@@ -137,8 +142,8 @@ to read-station-csv
       set xcor first location
       set ycor last location
 
-      set nextStationId item 19 data
-      set prevStationId item 20 data
+      set nextStationId item 18 data
+      set prevStationId item 19 data
 
       set isTerminus? item 9 data
       set firstWeekDayIncTrainTime item 10 data ;;* ticks-per-hour / 60
@@ -151,7 +156,7 @@ to read-station-csv
       set firstIncTrainTime firstWeekDayIncTrainTime
       set firstDecTrainTime firstWeekDayDecTrainTime
 
-      set trainIntervals list (4) (6)
+      set trainIntervals list (peak-train-frequency) (nonpeak-train-frequency)
       set timeSinceLastTrain (list 0 0)
 
       set shape "circle"
@@ -216,38 +221,13 @@ to read-regions
   gis:draw rg-features 1
 end
 
-to read-population
-  file-open "data/total_resident_population.csv"
-
-  while [not file-at-end?] [
-    let data csv:from-row file-read-line
-
-    let reg regions with [name = item 0 data]
-    ask reg [
-      set population item 1 data * total-population
-      set age-dist (list (item 2 data) (item 3 data ) (item 4 data) (item 5 data) (item 6 data)
-        (item 7 data) (item 8 data) (item 9 data) (item 10 data) (item 11 data) (item 12 data)
-        (item 13 data) (item 14 data) (item 15 data) (item 16 data) (item 17 data) (item 18 data)
-        (item 19 data) (item 20 data))
-
-      hatch-residents population [
-        let random-var random-float 1
-        set age get-val-from-cdf random-var [age-dist] of myself
-        set home-location [list (pxcor) (pycor)] of one-of patches with [name = [name] of myself]
-        set label ""
-        setxy first home-location last home-location
-      ]
-    ]
-  ]
-end
-
 to setup
   ca
   file-close-all
   set day 0
   set total-population 10000
-  set peak-times (list (list 840 1140) (list 2040 2400))
   set ticks-per-hour 120
+  set peak-times (list (list (morning-peak-time * ticks-per-hour) ((morning-peak-time + morning-peak-duration) * ticks-per-hour)) (list (evening-peak-time * ticks-per-hour) ((evening-peak-time + evening-peak-duration) * ticks-per-hour)))
 
   read-regions
   read-station-csv
@@ -255,11 +235,16 @@ to setup
   read-prob-dist
   read-station-volume
 
-  ;;read-population
   reset-ticks
 
   let i ticks
   set day 4
+  ;; [unallocated in-progress completed]
+  set trips-stats (list 0 0 0)
+  set trips-timings []
+
+  show ticks
+  show i + (ticks-per-hour * 48)
   while [ticks < i + (ticks-per-hour * 48)][
     set in-setup? true
     go-loop
@@ -288,6 +273,8 @@ to go-loop
   if minute = 3 * ticks-per-hour [
     set day day + 1
     set completed-journeys 0
+    set trips-stats (list 0 0 0)
+    if length trips-timings > 0 [set trips-timings ( list item (length trips-timings - 1) trips-timings)]
     if day = 6 [
       ask stations [
         set firstIncTrainTime firstSunIncTrainTime
@@ -341,7 +328,7 @@ to spawn-trains
 
           set size 2
           ;; Assume speedis 60km hr^-1 = 1 km min -1
-          set speed patch-per-km / 2
+          ;;set speed patch-per-km / 2
 
           set isFirstTrain? false
           set isLastTrain? false
@@ -379,7 +366,7 @@ to spawn-trains
 
           set size 2
           ;; Assume speedis 60km hr^-1 = 1 km min -1
-          set speed patch-per-km / 2
+          ;;set speed patch-per-km / 2
 
           set isFirstTrain? false
           set isLastTrain? false
@@ -410,7 +397,7 @@ to move-trains
     ][
 
     ifelse nextStation != nobody [
-      ifelse abs ([xcor] of nextStation - xcor) < 1 and abs ([ycor] of nextStation - ycor) < 1 [
+      ifelse abs ([xcor] of nextStation - xcor) < speed and abs ([ycor] of nextStation - ycor) < speed [
         set stationObj nextStation
         set stationId [stationId] of nextStation
         setxy [xcor] of nextStation [ycor] of nextStation
@@ -436,7 +423,7 @@ to move-trains
       ]
       [
         face nextStation
-        fd 1
+        fd speed
         ;fd speed * speedMultiplier
       ]
     ]
@@ -526,6 +513,7 @@ to generate-residents
 
     ask stations [
       let num-residents table:get-or-default volume-dict (word day-type "|" time) 0
+      set trips-stats replace-item 0 trips-stats ((item 0 trips-stats) + num-residents)
       ;;show (list id "num" num-residents (word day-type "|" time))
       hatch-residents round floor(random-normal (num-residents / 1000) (num-residents / 20000)) [
         set shape "person"
@@ -536,6 +524,8 @@ to generate-residents
         set nextStationObjs one-of stations with [[item 0 path] of myself = reduce [[a b] -> (word a "/" b)] connections ]
         set state "connecting"
         set color white
+        set step-in-trip 0
+        set trips-stats replace-item 1 trips-stats (item 1 trips-stats + 1)
 
         ifelse nextStationObjs = nobody [
           show (list [connectionsObjs] of myself "test")
@@ -552,6 +542,7 @@ end
 
 to connect-resident-to-train
   ask residents [
+    set step-in-trip step-in-trip + 1
     ifelse state = "connecting" [
       set trainObj one-of trains with [nextStation != nobody and isWaiting? and member? [id] of stationObj ([[id] of stationObjs] of myself) and member? [id] of nextStation ([[id] of nextStationObjs] of myself)]
       ifelse trainObj != nobody [
@@ -580,6 +571,11 @@ to connect-resident-to-train
         if length path = 1 [
           set state "arrived"
           ask link-with trainObj [die]
+          set trips-stats replace-item 2 trips-stats (item 2 trips-stats + 1)
+          set trips-stats replace-item 1 trips-stats (item 1 trips-stats - 1)
+          set trips-timings lput step-in-trip trips-timings
+
+          set completed-journeys completed-journeys + 1
           die
         ]
         ;;set state "arrived"
@@ -604,6 +600,28 @@ end
 
 to reset-without-setup
   ask residents [die]
+  ask trains [die]
+  reset-ticks
+  set day 0
+
+  set peak-times (list (list (morning-peak-time * ticks-per-hour) ((morning-peak-time + morning-peak-duration) * ticks-per-hour)) (list (evening-peak-time * ticks-per-hour) ((evening-peak-time + evening-peak-duration) * ticks-per-hour)))
+
+  ask stations [
+    set trainIntervals list (peak-train-frequency) (nonpeak-train-frequency)
+    set timeSinceLastTrain (list 0 0)
+  ]
+
+  set day 4
+
+  let i ticks
+  while [ticks < i + (ticks-per-hour * 48)][
+    set in-setup? true
+    go-loop
+  ]
+  reset-ticks
+
+  set day 0
+  clear-all-plots
 end
 @#$#@#$#@
 GRAPHICS-WINDOW
@@ -684,24 +702,6 @@ NIL
 NIL
 1
 
-PLOT
-1277
-75
-1723
-459
-Trains On Red Line
-NIL
-NIL
-0.0
-10.0
-0.0
-10.0
-true
-false
-"" ""
-PENS
-"default" 1.0 0 -2674135 true "" "plot count trains with [lineId = \"NS\"]"
-
 BUTTON
 25
 128
@@ -737,10 +737,10 @@ NIL
 1
 
 PLOT
-891
-10
-1091
-160
+1111
+39
+1311
+189
 f
 NIL
 NIL
@@ -752,50 +752,14 @@ true
 false
 "" ""
 PENS
-"default" 1.0 0 -16777216 true "" "plot completed-journeys"
+"default" 1.0 0 -16777216 true "" "plot trips"
 
 PLOT
-908
-204
-1108
-354
-plot 1
-NIL
-NIL
-3.0
-25.0
-0.0
-20.0
-false
-false
-"" ""
-PENS
-"pen-0" 1.0 1 -13791810 true "" "plotxy ticks / 60 item 0 item 0 [timeSinceLastTrain] of stations with [lineId = \"NS\" and stationId = 10]"
-
-PLOT
-900
-335
-1100
-485
-plot 2
-NIL
-NIL
-0.0
-10.0
-0.0
-10.0
-true
-false
-"" ""
-PENS
-"default" 1.0 1 -16777216 true "" "histogram [timeSinceLastTrain] of stations\n"
-
-PLOT
-1105
-14
-1305
-164
-plot 3
+1077
+339
+1323
+531
+Trains Per Line
 NIL
 NIL
 0.0
@@ -811,30 +775,13 @@ PENS
 "pen-2" 1.0 0 -2674135 true "" "plot count trains with [lineId = \"NS\"]"
 "pen-3" 1.0 0 -8630108 true "" "plot count trains with [lineId = \"NE\"]"
 "pen-4" 1.0 0 -955883 true "" "plot count trains with [lineId = \"CC\"]"
+"pen-5" 1.0 0 -6459832 true "" "plot count trains with [lineId = \"TE\"]"
 
 PLOT
-1116
-207
-1316
-357
-plot 4
-NIL
-NIL
-0.0
-10.0
-0.0
-10.0
-true
-false
-"" ""
-PENS
-"default" 1.0 0 -16777216 true "" "plot count turtles"
-
-PLOT
-1112
-456
-1312
-606
+1442
+19
+1642
+169
 num of ppl
 NIL
 NIL
@@ -860,10 +807,10 @@ count residents
 11
 
 MONITOR
-495
-616
-552
-661
+969
+600
+1026
+645
 NIL
 minute
 17
@@ -894,17 +841,17 @@ offsetTrainEndTime
 offsetTrainEndTime
 -50
 50
-0.0
+16.0
 1
 1
 NIL
 HORIZONTAL
 
 MONITOR
-272
-613
-393
-658
+746
+597
+867
+642
 hour
 floor (minute / 120)
 17
@@ -912,10 +859,10 @@ floor (minute / 120)
 11
 
 MONITOR
-411
-618
-489
-663
+885
+602
+963
+647
 real minute
 (minute mod 120) / 2
 17
@@ -923,10 +870,10 @@ real minute
 11
 
 MONITOR
-172
-612
-229
-657
+646
+596
+703
+641
 NIL
 day
 17
@@ -934,10 +881,10 @@ day
 11
 
 BUTTON
-33
-349
-96
+67
 382
+130
+415
 reset
 reset-without-setup
 NIL
@@ -950,20 +897,207 @@ NIL
 NIL
 1
 
+PLOT
+1433
+286
+1879
+579
+Average Number of Passengers for Train
+NIL
+NIL
+0.0
+10.0
+0.0
+10.0
+true
+false
+"" ""
+PENS
+"default" 1.0 0 -10899396 true "" "plot sum [count my-links] of trains with [lineId = \"EW\"] / max (list (count trains with [lineId = \"EW\"]) (1))"
+"pen-2" 1.0 0 -2674135 true "" "plot sum [count my-links] of trains with [lineId = \"NS\"] / max (list (count trains with [lineId = \"NS\"]) (1))"
+"pen-3" 1.0 0 -955883 true "" "plot sum [count my-links] of trains with [lineId = \"CC\"] / max (list (count trains with [lineId = \"CC\"]) (1))"
+"pen-4" 1.0 0 -6459832 true "" "plot sum [count my-links] of trains with [lineId = \"TE\"] / max (list (count trains with [lineId = \"TE\"]) (1))"
+"pen-10" 1.0 0 -13345367 true "" "plot sum [count my-links] of trains with [lineId = \"DT\"] / max (list (count trains with [lineId = \"DT\"]) (1))"
+"pen-11" 1.0 0 -8630108 true "" "plot sum [count my-links] of trains with [lineId = \"NE\"] / max (list (count trains with [lineId = \"NE\"]) (1))"
+
 SLIDER
-19
-415
-191
-448
-speedMultiplier
-speedMultiplier
-0
+23
+459
+195
+492
+speed
+speed
+0.1
 2
-1.0
+2.0
 0.1
 1
 NIL
 HORIZONTAL
+
+SLIDER
+22
+594
+194
+627
+morning-peak-time
+morning-peak-time
+5
+12
+8.0
+1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+24
+639
+196
+672
+evening-peak-time
+evening-peak-time
+12
+26
+17.0
+1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+214
+596
+393
+629
+morning-peak-duration
+morning-peak-duration
+0
+3
+2.0
+1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+221
+640
+398
+673
+evening-peak-duration
+evening-peak-duration
+0
+5
+3.0
+1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+431
+601
+603
+634
+peak-train-frequency
+peak-train-frequency
+1
+10
+6.0
+1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+435
+648
+623
+681
+nonpeak-train-frequency
+nonpeak-train-frequency
+1
+10
+7.0
+1
+1
+NIL
+HORIZONTAL
+
+PLOT
+1085
+558
+1285
+708
+plot 1
+NIL
+NIL
+0.0
+10.0
+0.0
+10.0
+true
+false
+"" ""
+PENS
+"default" 1.0 0 -8630108 true "" "plot item 2 trips-stats"
+"pen-2" 1.0 0 -2674135 true "" "plot item 1 trips-stats"
+
+BUTTON
+45
+102
+149
+135
+go one week
+while [day <= 6] [go]
+NIL
+1
+T
+OBSERVER
+NIL
+NIL
+NIL
+NIL
+1
+
+BUTTON
+46
+418
+140
+451
+go one day
+while [minute <= 3119] [go]
+NIL
+1
+T
+OBSERVER
+NIL
+NIL
+NIL
+NIL
+1
+
+MONITOR
+1111
+261
+1236
+306
+NIL
+completed-journeys
+17
+1
+11
+
+CHOOSER
+21
+325
+159
+370
+lines
+lines
+"Default" "TE Extension"
+0
 
 @#$#@#$#@
 ## WHAT IS IT?
@@ -1311,6 +1445,31 @@ NetLogo 6.3.0
 @#$#@#$#@
 @#$#@#$#@
 @#$#@#$#@
+<experiments>
+  <experiment name="peak-time-frequency" repetitions="1" runMetricsEveryStep="true">
+    <setup>setup</setup>
+    <go>go</go>
+    <timeLimit steps="3119"/>
+    <metric>completed-journeys</metric>
+    <steppedValueSet variable="evening-peak-time" first="15" step="1" last="20"/>
+    <enumeratedValueSet variable="offsetTrainStartTime">
+      <value value="0"/>
+    </enumeratedValueSet>
+    <steppedValueSet variable="morning-peak-duration" first="0" step="1" last="4"/>
+    <steppedValueSet variable="peak-train-frequency" first="2" step="1" last="8"/>
+    <steppedValueSet variable="morning-peak-time" first="6" step="1" last="10"/>
+    <enumeratedValueSet variable="speed">
+      <value value="1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="offsetTrainEndTime">
+      <value value="16"/>
+    </enumeratedValueSet>
+    <steppedValueSet variable="evening-peak-duration" first="0" step="1" last="4"/>
+    <enumeratedValueSet variable="nonpeak-train-frequency">
+      <value value="7"/>
+    </enumeratedValueSet>
+  </experiment>
+</experiments>
 @#$#@#$#@
 @#$#@#$#@
 default
