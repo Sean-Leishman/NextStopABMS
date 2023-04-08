@@ -5,7 +5,7 @@
 
 extensions [csv gis table]
 
-globals [in-setup? day minute ticks-per-hour total-population rg-features patch-per-km peak-times completed-journeys]
+globals [in-setup? day minute ticks-per-hour total-population rg-features patch-per-km peak-times completed-journeys journey-mat station-name-map]
 
 breed [stations station]
 breed [trains train]
@@ -31,7 +31,7 @@ trains-own [id speed location nextStation stationObj stationId lineId direction 
 patches-own [random-n centroid name]
 regions-own [region-name population age-dist]
 
-residents-own [age life-type income home-location work-location]
+residents-own [age life-type income home-location work-location destination path nextStationObj stationObj trainObj state]
 
 to read-prob-dist
   file-open "data/prob_trip.csv"
@@ -50,13 +50,33 @@ to read-prob-dist
       set last-idx a + 1
       ]]
     set stas lput substring temp-id last-idx length temp-id stas
+    let key (word item 1 prob_data "|" item 2 prob_data)
 
     foreach stas [s ->
       ask stations with [id = s][
         set connections stas
-        table:put dest-dict (word item 1 prob_data "|" item 2 prob_data "|" item 4 prob_data) item 5 prob_data
+        ;;"|" item 4 prob_data item 5 prob_data
+        let temp-dict table:get-or-default dest-dict key table:make
+        table:put temp-dict (item 4 prob_data) item 5 prob_data
+        table:put dest-dict key temp-dict
       ]
     ]
+  ]
+  file-close
+end
+
+to read-journey-times
+  file-open "data/journey_times.csv"
+  let jdata csv:from-row file-read-line
+  set journey-mat []
+  set station-name-map table:make
+  let count1 0
+  while [not file-at-end?][
+    set jdata csv:from-row file-read-line
+    let stationLabel item 0 jdata
+    set journey-mat insert-item count1 journey-mat (sublist jdata 1 (length jdata))
+    table:put station-name-map stationLabel count1
+    set count1 count1 + 1
   ]
   file-close
 end
@@ -228,6 +248,7 @@ to setup
 
   read-regions
   read-station-csv
+  read-journey-times
   read-prob-dist
   read-station-volume
 
@@ -378,9 +399,11 @@ to move-trains
     ;; check if arrived at station and so if the next station should be set
     ifelse isWaiting? [
       set isWaiting? false
-      ask stationObj [set train_at false]
-      if direction = "-" [ask stationObj [set timeSinceLastTrain replace-item 0 timeSinceLastTrain 0]]
-      if direction = "+" [ask stationObj [set timeSinceLastTrain replace-item 1 timeSinceLastTrain 0]]
+      ask stationObj [
+        set train_at false
+        if ([direction] of myself = "-") [set timeSinceLastTrain replace-item 0 timeSinceLastTrain 0]
+        if [direction] of myself = "+" [set timeSinceLastTrain replace-item 1 timeSinceLastTrain 0]
+      ]
     ][
 
     ifelse nextStation != nobody [
@@ -415,8 +438,13 @@ to move-trains
       ]
     ]
     [
-      set completed-journeys completed-journeys + 1
+      if lineId = "NE" [if not in-setup? [show (list "kill" self who my-links link-neighbors)]]
+
+      ask link-neighbors [die]
+      ask my-in-links [die]
+      if lineId = "NE" [if not in-setup? [show (list "kill" self who my-links link-neighbors)]]
       die
+      if lineId = "NE" [if not in-setup? [show (list "kill" self who my-links link-neighbors)]]
     ]
 
   ]
@@ -426,21 +454,21 @@ end
 to setup-run
   if direction = "-" [
     ifelse day = 6 [
-      if isFirstTrain? [ask nextStation with [isTerminus? false] [set firstSunDecTrainTime minute]]
+      if isFirstTrain? [ask nextStation [if isTerminus? = false [set firstSunDecTrainTime minute]]]
     ]
     [
-      if isFirstTrain?  [ask nextStation with [isTerminus? false] [set firstWeekDayDecTrainTime minute]]
-      if isLastTrain?  [ask nextStation with [isTerminus? false] [set lastDecTrainTime minute]]
+      if isFirstTrain?  [ask nextStation [if isTerminus? = false [set firstWeekDayDecTrainTime minute]]]
+      if isLastTrain?  [ask nextStation [if isTerminus? = false [set lastDecTrainTime minute]]]
     ]
   ]
 
   if direction = "+" [
     ifelse day = 6 [
-      if isFirstTrain?  [ask nextStation with [isTerminus? false] [set firstSunIncTrainTime minute]]
+      if isFirstTrain?  [ask nextStation [if isTerminus? = false [set firstSunIncTrainTime minute]]]
     ]
     [
-      if isFirstTrain?  [ask nextStation with [isTerminus? false] [set firstWeekDayIncTrainTime minute]]
-      if isLastTrain?  [ask nextStation with [isTerminus? false] [set lastIncTrainTime minute]]
+      if isFirstTrain?  [ask nextStation [if isTerminus? = false [set firstWeekDayIncTrainTime minute]]]
+      if isLastTrain?  [ask nextStation [if isTerminus? = false [set lastIncTrainTime minute]]]
     ]
   ]
 end
@@ -465,26 +493,94 @@ to-report get-val-from-cdf [prob probs]
   report i - 1
 end
 
+to-report generate-destination [time]
+  let day-type "WEEKDAY"
+  if day >= 5 [set day-type "WEEKENDS/HOLIDAY"]
+
+  let tempStationId reduce [[a b] -> (word a "/" b)] ([connections] of myself)
+  let key (word day-type "|" time)
+
+  let destination-dict table:get [dest-dict] of myself key
+  let random-val random-float 1
+  let dict-list table:to-list destination-dict
+
+  foreach range (table:length destination-dict) [ a ->
+    if random-val < item 1 item a dict-list [
+      report item 0 item a dict-list
+    ]
+  ]
+  report item 0 item (table:length destination-dict - 1) dict-list
+end
+
 to generate-residents
   ;; summary: residents spawn at each station throughout the day based on "passenger vol by train stations" data (from LTA DataMall)
   ;; NOTE: (a) we will be using tap-in-vol data, (b) each agent represents 1000 people, (c) agents will spawn at hour 0, 5, 6, 7, ... 23
   ;; KEY VARIABLES NEEDED: (a) time, (b) weekday/weekend, (c) stn-no
 
-  if in-setup? = false [
+  if minute mod 120 = 0 and in-setup? = false [
     let time floor(minute / 120)
     ;; open file - based on type of day (i.e., weekend or weekday)
-    ifelse day > 5 [
-  ][]]
+    let day-type "WEEKDAY"
+    if day >= 5 [set day-type "WEEKENDS/HOLIDAY"]
+
+    ask stations [
+      let num-residents table:get-or-default volume-dict (word day-type "|" time) 0
+      hatch-residents round floor(num-residents / 1000) [
+        set shape "person"
+        set size 1
+        set stationObj myself
+        set destination generate-destination time
+        set path get-shortest-path reduce [[a b] -> (word a "/" b)] [connections] of myself destination
+        set nextStationObj one-of stations with [item 0 path = connections]
+        set state "connecting"
+        set color white
+
+                ]
+    ]
+
+  ]
 end
 
 to connect-resident-to-train
-  ask stations [
-    if train_at = true [
-      ask residents [
-        create-links-with trains in-radius 0 [tie]
+  ask residents [
+    ifelse state = "connecting" [
+      ask trains with [isWaiting? and stationObj = [stationObj] of myself and nextStationObj = [nextStationObj] of myself][
+        set trainObj self
+        create-link-with myself [tie]
+        set state "transit"
+      ]
+    ][
+      ifelse state = "transit" and [isWaiting?] of trainObj and length path > 0 [
+        set stationObj one-of stations with [item 0 path = connections]
+        set path sublist path 1 length path
+        set nextStationObj one-of stations with [item 0 path = connections]
+        ifelse not [nextStationObj] of trainObj = nextStationObj [
+          set state "connecting"
+          ask my-links [untie die]
+        ]
+        [
+
+        ]
+      ]
+      [
+        set state "arrived"
+        die
       ]
     ]
   ]
+end
+
+to-report get-shortest-path [stn-1 stn-2]
+  let id1 table:get station-name-map stn-1
+  let id2 table:get station-name-map stn-2
+
+  let spath []
+
+  while [id1 != id2][
+    set id2 item id2 item id1 journey-mat
+    set spath lput table:get station-name-map id2 spath
+  ]
+  report reverse sublist spath 1 length spath
 end
 @#$#@#$#@
 GRAPHICS-WINDOW
@@ -589,7 +685,7 @@ BUTTON
 279
 161
 NIL
-while [minute-in-day ticks != 310][go]
+while [minute < 120][go]
 NIL
 1
 T
@@ -606,7 +702,7 @@ BUTTON
 203
 211
 NIL
-while [ticks < 2700] [go]\n
+while [ticks < 330] [go]\n
 NIL
 1
 T
