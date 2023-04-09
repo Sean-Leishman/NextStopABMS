@@ -90,7 +90,6 @@ end
 to read-station-volume
   if lines = "TE Extension" [file-open "data/passenger_volTE4.csv"]
   if lines = "Default" [file-open "data/passenger_vol.csv"]
-  file-open file-path
   let data csv:from-row file-read-line
   while [not file-at-end?] [
     set data csv:from-row file-read-line
@@ -703,29 +702,12 @@ NIL
 1
 
 BUTTON
-25
-128
-279
-161
-NIL
+15
+158
+269
+191
+go till 5AM
 while [floor (minute / 120) < 5][go]
-NIL
-1
-T
-OBSERVER
-NIL
-NIL
-NIL
-NIL
-1
-
-BUTTON
-28
-178
-203
-211
-NIL
-while [ticks < 330] [go]\n
 NIL
 1
 T
@@ -929,7 +911,7 @@ speed
 speed
 0.1
 2
-2.0
+1.0
 0.1
 1
 NIL
@@ -944,7 +926,7 @@ morning-peak-time
 morning-peak-time
 5
 12
-8.0
+7.0
 1
 1
 NIL
@@ -1004,7 +986,7 @@ peak-train-frequency
 peak-train-frequency
 1
 10
-6.0
+3.0
 1
 1
 NIL
@@ -1097,7 +1079,7 @@ CHOOSER
 lines
 lines
 "Default" "TE Extension"
-0
+1
 
 @#$#@#$#@
 ## WHAT IS IT?

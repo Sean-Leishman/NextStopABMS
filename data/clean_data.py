@@ -67,6 +67,7 @@ def process_prob_file(filename, savedfilename1, savedfilename2, special=None):
     df1['CUMSUM'] = df1.groupby(['ORIGIN_PT_CODE','TIME_PER_HOUR','DAY_TYPE'])['PROB_TRIP'].cumsum()
 
     df1 = df1.drop(['YEAR_MONTH','PT_TYPE','PROB_TRIP','TOTAL_TRIPS_AGG','TOTAL_TRIPS'], axis=1)
+    df1 = df1[["DAY_TYPE","TIME_PER_HOUR","ORIGIN_PT_CODE","DESTINATION_PT_CODE","CUMSUM"]]
     df1.to_csv(savedfilename1)
 
     save_shortest_paths(df1,savedfilename2)
@@ -163,4 +164,4 @@ if __name__ == "__main__":
 
     process_stations_file("stationsTE4.csv","formatted_stationsTE4.csv")
     process_prob_file("origin_destination_train_202302.csv","prob_tripTE4.csv","journey_timesTE4.csv", special="TE")
-    save_passenger_volume(savedFilename="passenger_vol.csv", special="TE")
+    save_passenger_volume(savedFilename="passenger_volTE4.csv", special="TE")

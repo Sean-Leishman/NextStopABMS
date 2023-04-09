@@ -34,8 +34,8 @@ regions-own [region-name population age-dist]
 residents-own [age life-type income home-location work-location destination path nextStationObj stationObj stationObjs nextStationObjs trainObj state step-in-trip]
 
 to read-prob-dist
-  if lines = "TE Extension" [file-open "data/prob_trip.csv"]
-  if lines = "Default" [file-open "data/prob_tripTE.csv"]
+  if lines = "TE Extension" [file-open "data/prob_tripTE4.csv"]
+  if lines = "Default" [file-open "data/prob_trip.csv"]
   let prob_data csv:from-row file-read-line
   let temp-id 0
   let last-idx 0
@@ -88,8 +88,8 @@ to read-journey-times
 end
 
 to read-station-volume
-  let file-path "data/passenger_vol.csv"
-  file-open file-path
+  if lines = "TE Extension" [file-open "data/passenger_volTE4.csv"]
+  if lines = "Default" [file-open "data/passenger_vol.csv"]
   let data csv:from-row file-read-line
   while [not file-at-end?] [
     set data csv:from-row file-read-line
@@ -108,7 +108,8 @@ to read-station-volume
 end
 
 to read-station-csv
-  file-open "data/formatted_stations.csv"
+  if lines = "TE Extension" [file-open "data/formatted_stationsTE4.csv"]
+  if lines = "Default" [file-open "data/formatted_stations.csv"]
 
   let data csv:from-row file-read-line
   while [not file-at-end?] [
@@ -927,7 +928,7 @@ speed
 speed
 0.1
 2
-2.0
+1.0
 0.1
 1
 NIL
@@ -942,7 +943,7 @@ morning-peak-time
 morning-peak-time
 5
 12
-8.0
+7.0
 1
 1
 NIL
@@ -1002,7 +1003,7 @@ peak-train-frequency
 peak-train-frequency
 1
 10
-6.0
+3.0
 1
 1
 NIL
@@ -1017,7 +1018,7 @@ nonpeak-train-frequency
 nonpeak-train-frequency
 1
 10
-7.0
+5.0
 1
 1
 NIL
