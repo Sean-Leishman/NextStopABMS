@@ -5,7 +5,7 @@
 
 extensions [csv gis table]
 
-globals [in-setup? day minute ticks-per-hour total-population rg-features patch-per-km peak-times completed-journeys journey-mat station-name-map trips-stats trips-timings]
+globals [in-setup? is-setup? day minute ticks-per-hour total-population rg-features patch-per-km peak-times completed-journeys journey-mat station-name-map trips-stats trips-timings]
 
 breed [stations station]
 breed [trains train]
@@ -224,6 +224,7 @@ to setup
   ca
   file-close-all
   set day 0
+  set is-setup? true
   set total-population 10000
   set ticks-per-hour 120
   set peak-times (list (list (morning-peak-time * ticks-per-hour) ((morning-peak-time + morning-peak-duration) * ticks-per-hour)) (list (evening-peak-time * ticks-per-hour) ((evening-peak-time + evening-peak-duration) * ticks-per-hour)))
@@ -244,13 +245,13 @@ to setup
 
   show ticks
   show i + (ticks-per-hour * 48)
-  while [ticks < i + (ticks-per-hour * 48)][
+  while [ticks <= i + (ticks-per-hour * 48)][
     set in-setup? true
     go-loop
   ]
   reset-ticks
 
-  set day 0
+  set day pickDay - 1
 
 end
 
@@ -613,13 +614,13 @@ to reset-without-setup
   set day 4
 
   let i ticks
-  while [ticks < i + (ticks-per-hour * 48)][
+  while [ticks <= i + (ticks-per-hour * 48)][
     set in-setup? true
     go-loop
   ]
   reset-ticks
-
-  set day 0
+  show pickDay
+  set day pickDay - 1
   clear-all-plots
 end
 @#$#@#$#@
@@ -702,29 +703,12 @@ NIL
 1
 
 BUTTON
-25
-128
-279
-161
-NIL
+11
+160
+140
+201
+go till 5AM
 while [floor (minute / 120) < 5][go]
-NIL
-1
-T
-OBSERVER
-NIL
-NIL
-NIL
-NIL
-1
-
-BUTTON
-28
-178
-203
-211
-NIL
-while [ticks < 330] [go]\n
 NIL
 1
 T
@@ -819,7 +803,7 @@ minute
 SLIDER
 19
 232
-191
+138
 265
 offsetTrainStartTime
 offsetTrainStartTime
@@ -834,13 +818,13 @@ HORIZONTAL
 SLIDER
 14
 281
-186
+148
 314
 offsetTrainEndTime
 offsetTrainEndTime
 -50
 50
-16.0
+0.0
 1
 1
 NIL
@@ -922,13 +906,13 @@ PENS
 SLIDER
 23
 459
-195
+142
 492
 speed
 speed
 0.1
 2
-1.0
+2.0
 0.1
 1
 NIL
@@ -943,7 +927,7 @@ morning-peak-time
 morning-peak-time
 5
 12
-7.0
+8.0
 1
 1
 NIL
@@ -958,7 +942,7 @@ evening-peak-time
 evening-peak-time
 12
 26
-17.0
+15.0
 1
 1
 NIL
@@ -988,7 +972,7 @@ evening-peak-duration
 evening-peak-duration
 0
 5
-3.0
+1.0
 1
 1
 NIL
@@ -1003,7 +987,7 @@ peak-train-frequency
 peak-train-frequency
 1
 10
-3.0
+4.0
 1
 1
 NIL
@@ -1018,7 +1002,7 @@ nonpeak-train-frequency
 nonpeak-train-frequency
 1
 10
-5.0
+7.0
 1
 1
 NIL
@@ -1044,10 +1028,10 @@ PENS
 "pen-2" 1.0 0 -2674135 true "" "plot item 1 trips-stats"
 
 BUTTON
-45
-102
-149
-135
+41
+104
+145
+137
 go one week
 while [day <= 6] [go]
 NIL
@@ -1066,7 +1050,7 @@ BUTTON
 140
 451
 go one day
-while [minute <= 3119] [go]
+while [minute < 3239] [go]\ngo
 NIL
 1
 T
@@ -1091,12 +1075,22 @@ completed-journeys
 CHOOSER
 21
 325
-159
+143
 370
 lines
 lines
 "Default" "TE Extension"
 0
+
+CHOOSER
+33
+546
+171
+591
+pickDay
+pickDay
+0 1 2 3 4 5 6
+6
 
 @#$#@#$#@
 ## WHAT IS IT?
@@ -1445,25 +1439,60 @@ NetLogo 6.3.0
 @#$#@#$#@
 @#$#@#$#@
 <experiments>
-  <experiment name="peak-time-frequency" repetitions="1" runMetricsEveryStep="true">
-    <setup>setup</setup>
+  <experiment name="peak-time-frequency" repetitions="5" runMetricsEveryStep="false">
+    <setup>reset-without-setup</setup>
     <go>go</go>
     <timeLimit steps="3119"/>
     <metric>completed-journeys</metric>
-    <steppedValueSet variable="evening-peak-time" first="15" step="1" last="20"/>
+    <steppedValueSet variable="evening-peak-time" first="15" step="2" last="19"/>
     <enumeratedValueSet variable="offsetTrainStartTime">
       <value value="0"/>
     </enumeratedValueSet>
-    <steppedValueSet variable="morning-peak-duration" first="0" step="1" last="4"/>
-    <steppedValueSet variable="peak-train-frequency" first="2" step="1" last="8"/>
-    <steppedValueSet variable="morning-peak-time" first="6" step="1" last="10"/>
+    <steppedValueSet variable="morning-peak-duration" first="1" step="1" last="3"/>
+    <steppedValueSet variable="peak-train-frequency" first="2" step="2" last="6"/>
+    <steppedValueSet variable="morning-peak-time" first="6" step="2" last="10"/>
     <enumeratedValueSet variable="speed">
       <value value="1"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="offsetTrainEndTime">
       <value value="16"/>
     </enumeratedValueSet>
-    <steppedValueSet variable="evening-peak-duration" first="0" step="1" last="4"/>
+    <steppedValueSet variable="evening-peak-duration" first="1" step="2" last="3"/>
+    <enumeratedValueSet variable="nonpeak-train-frequency">
+      <value value="7"/>
+    </enumeratedValueSet>
+  </experiment>
+  <experiment name="experiment" repetitions="1" runMetricsEveryStep="true">
+    <setup>setup</setup>
+    <go>go</go>
+    <metric>count turtles</metric>
+    <enumeratedValueSet variable="evening-peak-time">
+      <value value="17"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="offsetTrainStartTime">
+      <value value="0"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="lines">
+      <value value="&quot;Default&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="morning-peak-duration">
+      <value value="2"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="peak-train-frequency">
+      <value value="3"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="morning-peak-time">
+      <value value="7"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="speed">
+      <value value="1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="offsetTrainEndTime">
+      <value value="16"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="evening-peak-duration">
+      <value value="3"/>
+    </enumeratedValueSet>
     <enumeratedValueSet variable="nonpeak-train-frequency">
       <value value="7"/>
     </enumeratedValueSet>
