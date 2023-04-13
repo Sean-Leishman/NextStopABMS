@@ -56,7 +56,9 @@ def process_prob_file(filename, savedfilename1, savedfilename2, special=None):
     if special == "TE":
         d = pd.read_csv("new_TE_stations.csv")
         df1 = df1.append(d)
-    
+
+    df1['ORIGIN_PT_CODE'] = df1['ORIGIN_PT_CODE'].str.replace(r"CC4/DT15$","CC4/DT15/CE0")
+    df1['DESTINATION_PT_CODE'] = df1['DESTINATION_PT_CODE'].str.replace(r"CC4/DT15$","CC4/DT15/CE0")
     
     df1 = df1.sort_values(by=['TIME_PER_HOUR','DESTINATION_PT_CODE'])
 
@@ -79,6 +81,8 @@ def save_passenger_volume(filename1="weekday_passenger_vol.csv", filename2="week
     df3 = df3.append(df4)
     df3['ORIGIN_PT_CODE'] = df3.ORIGIN_PT_CODE.str.replace(reg, "")
     df3 = df3.drop(df3.loc[(df3.ORIGIN_PT_CODE.str.startswith("B")) | (df3.ORIGIN_PT_CODE.str.startswith("P"))| (df3.ORIGIN_PT_CODE.str.startswith("S"))].index)
+    df3['ORIGIN_PT_CODE'] = df3['ORIGIN_PT_CODE'].str.replace(r"CC4/DT15$","CC4/DT15/CE0")
+    
     df3.to_csv(savedFilename)
 
 def save_shortest_paths(df1, savedFilename="journey_times.csv"):
@@ -127,6 +131,8 @@ def save_shortest_paths(df1, savedFilename="journey_times.csv"):
 
     df1 = df1.drop(df1.loc[(df1.ORIGIN_PT_CODE.str.startswith("B")) | (df1.ORIGIN_PT_CODE.str.startswith("P"))| (df1.ORIGIN_PT_CODE.str.startswith("S"))].index)
     df1 = df1.drop(df1.loc[(df1.DESTINATION_PT_CODE.str.startswith("B")) | (df1.DESTINATION_PT_CODE.str.startswith("P"))| (df1.DESTINATION_PT_CODE.str.startswith("S"))].index)
+    df1['ORIGIN_PT_CODE'] = df1['ORIGIN_PT_CODE'].str.replace(r"CC4/DT15$","CC4/DT15/CE0")
+    df1['DESTINATION_PT_CODE'] = df1['DESTINATION_PT_CODE'].str.replace(r"CC4/DT15$","CC4/DT15/CE0")
 
     cost_df = df1.groupby(['ORIGIN_PT_CODE','DESTINATION_PT_CODE']).mean().reset_index()
     cost_df = cost_df.pivot(index="ORIGIN_PT_CODE", columns="DESTINATION_PT_CODE", values="CUMSUM")

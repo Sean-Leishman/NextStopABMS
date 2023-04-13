@@ -31,7 +31,7 @@ trains-own [id location nextStation stationObj nextStationObj stationId lineId d
 patches-own [random-n centroid name]
 regions-own [region-name population age-dist]
 
-residents-own [age life-type income home-location work-location destination path nextStationObj stationObj stationObjs nextStationObjs trainObj state step-in-trip]
+residents-own [age life-type income home-location work-location destination path nextStationObj stationObj stationObjs nextStationObjs trainObj state step-in-trip step-in-phase time-until-spawn pre-journey-duration post-journey-duration]
 
 to read-prob-dist
   if lines = "TE Extension" [file-open "data/prob_tripTE4.csv"]
@@ -102,7 +102,7 @@ to read-station-volume
     set stas lput substring (item 5 data) last-idx length (item 5 data) stas
 
     let key (word (item 2 data) "|" (item 3 data))
-    ask stations with [connections = stas] [table:put volume-dict key (item 6 data)]
+    ask stations with [connections = stas] [table:put volume-dict key ((item 6 data) / length stas)]
   ]
 
 end
@@ -132,6 +132,7 @@ to read-station-csv
       if lineId = "BP" [set color grey]
       if lineId = "TE" [set color brown]
       if lineId = "CC" [set color orange]
+      if lineId = "CE" [set color orange]
       if lineId = "CG" [set color green]
       if lineId = "PE" [set color grey]
       if lineId = "SE" [set color grey]
@@ -274,6 +275,7 @@ to go-loop
     set day day + 1
     set completed-journeys 0
     set trips-stats (list 0 0 0)
+    set trips-timings []
     if length trips-timings > 0 [set trips-timings ( list item (length trips-timings - 1) trips-timings)]
     if day = 6 [
       ask stations [
@@ -522,9 +524,13 @@ to generate-residents
         set destination generate-destination time
         set path get-shortest-path reduce [[a b] -> (word a "/" b)] [connections] of myself destination
         set nextStationObjs one-of stations with [[item 0 path] of myself = reduce [[a b] -> (word a "/" b)] connections ]
-        set state "connecting"
-        set color white
+        set state "at-origin"
+        set time-until-spawn 1 + random 59
+        set pre-journey-duration clip-normal random-normal 10 10 0 60
+        set post-journey-duration clip-normal random-normal 10 10 0 60
+        set color red
         set step-in-trip 0
+        set step-in-phase 0
         set trips-stats replace-item 1 trips-stats (item 1 trips-stats + 1)
 
         ifelse nextStationObjs = nobody [
@@ -543,45 +549,66 @@ end
 to connect-resident-to-train
   ask residents [
     set step-in-trip step-in-trip + 1
-    ifelse state = "connecting" [
-      set trainObj one-of trains with [nextStation != nobody and isWaiting? and member? [id] of stationObj ([[id] of stationObjs] of myself) and member? [id] of nextStation ([[id] of nextStationObjs] of myself)]
-      ifelse trainObj != nobody [
+    set step-in-phase step-in-phase + 1
+    (ifelse
+      state = "at-origin" [
+        if step-in-trip >= time-until-spawn [
+          set state "to-origin-station"
+          set color violet
+          set step-in-phase 0
+        ]
+      ]
+      state = "to-origin-station" [
+        if step-in-phase >= pre-journey-duration [
+          set state "connecting"
+          set color white
+          set step-in-phase 0
+        ]
+      ]
+      state = "connecting" [
+        set trainObj one-of trains with [nextStation != nobody and isWaiting? and member? [id] of stationObj ([[id] of stationObjs] of myself) and member? [id] of nextStation ([[id] of nextStationObjs] of myself)]
+        ifelse trainObj != nobody [
           set state "transit"
           create-link-with trainObj [tie]
+        ]
+      []
       ]
-      [
-      ]
-      ;;show (list trainObj state [id] of stationObjs [id] of nextStationObjs )
-    ][
-      ifelse state = "transit" and [isWaiting?] of trainObj and length path > 1 [
-        ;;show (list state
-        set path sublist path 1 length path
-        set stationObjs nextStationObjs
-        set nextStationObjs [connectionsObjs] of one-of stations with [[item 0 path] of myself = reduce [[a b] -> (word a "/" b)] connections ]
+      state = "transit" [
+        ifelse [isWaiting?] of trainObj and length path > 1 [
+          set path sublist path 1 length path
+          set stationObjs nextStationObjs
+          set nextStationObjs [connectionsObjs] of one-of stations with [[item 0 path] of myself = reduce [[a b] -> (word a "/" b)] connections ]
 
-        ifelse [nextStation] of trainObj != nobody and not member? [[id] of nextStation] of trainObj [id] of nextStationObjs [
-          set state "connecting"
-          ask my-links [untie die]
+          ifelse [nextStation] of trainObj != nobody and not member? [[id] of nextStation] of trainObj [id] of nextStationObjs [
+            set state "connecting"
+            ask my-links [untie die]
+          ]
+        []
         ]
         [
-
+          if length path = 1 [
+            set state "arrived-at-station"
+            set step-in-phase 0
+          ]
         ]
       ]
-      [
-        if length path = 1 [
-          set state "arrived"
-          ask link-with trainObj [die]
-          set trips-stats replace-item 2 trips-stats (item 2 trips-stats + 1)
-          set trips-stats replace-item 1 trips-stats (item 1 trips-stats - 1)
-          set trips-timings lput step-in-trip trips-timings
+      state = "arrived-at-station" [
+        if step-in-phase >= post-journey-duration [
+          set state "arrived-at-destination"
 
-          set completed-journeys completed-journeys + 1
-          die
+          set color blue
         ]
-        ;;set state "arrived"
-        ;;die
       ]
-    ]
+      state = "arrived-at-destination" [
+        set trips-stats replace-item 2 trips-stats (item 2 trips-stats + 1)
+        set trips-stats replace-item 1 trips-stats (item 1 trips-stats - 1)
+        set trips-timings lput step-in-trip trips-timings
+
+        set completed-journeys completed-journeys + 1
+        die
+      ]
+    )
+
   ]
 end
 
@@ -622,6 +649,10 @@ to reset-without-setup
   show pickDay
   set day pickDay - 1
   clear-all-plots
+end
+
+to-report clip-normal [x minX maxX]
+  report min (list (maxX) (max (list (x) (minX))))
 end
 @#$#@#$#@
 GRAPHICS-WINDOW
@@ -1013,7 +1044,7 @@ PLOT
 558
 1285
 708
-plot 1
+Average Journey Time
 NIL
 NIL
 0.0
@@ -1024,8 +1055,7 @@ true
 false
 "" ""
 PENS
-"default" 1.0 0 -8630108 true "" "plot item 2 trips-stats"
-"pen-2" 1.0 0 -2674135 true "" "plot item 1 trips-stats"
+"default" 1.0 0 -8630108 true "" "plot (sum trips-timings) / max (list (length trips-timings) 1)"
 
 BUTTON
 41
@@ -1091,6 +1121,25 @@ pickDay
 pickDay
 0 1 2 3 4 5 6
 6
+
+PLOT
+1360
+620
+1560
+770
+Average Time In Phase (FIX)
+NIL
+NIL
+0.0
+10.0
+0.0
+10.0
+true
+false
+"" ""
+PENS
+"default" 1.0 0 -16777216 true "" "plot sum [step-in-phase] of residents with [state = \"at-origin\"] / max (list (1) (length [step-in-phase] of residents with [state = \"at-origin\"]))\n"
+"pen-1" 1.0 0 -13840069 true "" "plot sum [step-in-phase] of residents with [state = \"to-update-station\"] / max (list (1) (length [step-in-phase] of residents with [state = \"to-update-station\"]))"
 
 @#$#@#$#@
 ## WHAT IS IT?
