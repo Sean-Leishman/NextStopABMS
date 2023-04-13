@@ -5,7 +5,7 @@
 
 extensions [csv gis table]
 
-globals [in-setup? is-setup? day minute ticks-per-hour total-population rg-features patch-per-km peak-times completed-journeys journey-mat station-name-map trips-stats trips-timings]
+globals [in-setup? is-setup? day minute ticks-per-hour total-population rg-features patch-per-km peak-times completed-journeys journey-mat station-name-map trips-stats trips-timings waiting-timings phase-stats]
 
 breed [stations station]
 breed [trains train]
@@ -31,7 +31,7 @@ trains-own [id location nextStation stationObj nextStationObj stationId lineId d
 patches-own [random-n centroid name]
 regions-own [region-name population age-dist]
 
-residents-own [age life-type income home-location work-location destination path nextStationObj stationObj stationObjs nextStationObjs trainObj state step-in-trip step-in-phase time-until-spawn pre-journey-duration post-journey-duration]
+residents-own [age life-type income home-location work-location destination path nextStationObj stationObj stationObjs nextStationObjs trainObj state step-in-trip step-in-phase time-until-spawn pre-journey-duration post-journey-duration connections-journey-duration time-waiting]
 
 to read-prob-dist
   if lines = "TE Extension" [file-open "data/prob_tripTE4.csv"]
@@ -156,7 +156,7 @@ to read-station-csv
       set firstIncTrainTime firstWeekDayIncTrainTime
       set firstDecTrainTime firstWeekDayDecTrainTime
 
-      set trainIntervals list (peak-train-frequency) (nonpeak-train-frequency)
+      set trainIntervals list (peak-train-frequency * 2) (nonpeak-train-frequency * 2)
       set timeSinceLastTrain (list 0 0)
 
       set shape "circle"
@@ -242,7 +242,10 @@ to setup
   set day 4
   ;; [unallocated in-progress completed]
   set trips-stats (list 0 0 0)
+  ;; [moving-to-origin waiting-at-station in-transit in-connection moving-to-destination]
+  set phase-stats (list 0 0 0 0 0)
   set trips-timings []
+  set waiting-timings []
 
   show ticks
   show i + (ticks-per-hour * 48)
@@ -275,8 +278,8 @@ to go-loop
     set day day + 1
     set completed-journeys 0
     set trips-stats (list 0 0 0)
-    set trips-timings []
-    if length trips-timings > 0 [set trips-timings ( list item (length trips-timings - 1) trips-timings)]
+    ;;set trips-timings []
+    ask residents [die]
     if day = 6 [
       ask stations [
         set firstIncTrainTime firstSunIncTrainTime
@@ -525,12 +528,14 @@ to generate-residents
         set path get-shortest-path reduce [[a b] -> (word a "/" b)] [connections] of myself destination
         set nextStationObjs one-of stations with [[item 0 path] of myself = reduce [[a b] -> (word a "/" b)] connections ]
         set state "at-origin"
-        set time-until-spawn 1 + random 59
-        set pre-journey-duration clip-normal random-normal 10 10 0 60
-        set post-journey-duration clip-normal random-normal 10 10 0 60
+        set time-until-spawn 1 + random 119
+        set pre-journey-duration clip-normal random-normal 20 20 0 120
+        set connections-journey-duration random-normal 6 2
+        set post-journey-duration clip-normal random-normal 20 20 0 60
         set color red
         set step-in-trip 0
         set step-in-phase 0
+        set time-waiting 0
         set trips-stats replace-item 1 trips-stats (item 1 trips-stats + 1)
 
         ifelse nextStationObjs = nobody [
@@ -550,6 +555,9 @@ to connect-resident-to-train
   ask residents [
     set step-in-trip step-in-trip + 1
     set step-in-phase step-in-phase + 1
+
+    ;; [moving-to-origin waiting-at-station in-transit in-connection moving-to-destination]
+
     (ifelse
       state = "at-origin" [
         if step-in-trip >= time-until-spawn [
@@ -566,12 +574,16 @@ to connect-resident-to-train
         ]
       ]
       state = "connecting" [
-        set trainObj one-of trains with [nextStation != nobody and isWaiting? and member? [id] of stationObj ([[id] of stationObjs] of myself) and member? [id] of nextStation ([[id] of nextStationObjs] of myself)]
-        ifelse trainObj != nobody [
-          set state "transit"
-          create-link-with trainObj [tie]
+        set time-waiting time-waiting + 1
+        if step-in-phase >= connections-journey-duration [
+          set trainObj one-of trains with [nextStation != nobody and isWaiting? and member? [id] of stationObj ([[id] of stationObjs] of myself) and member? [id] of nextStation ([[id] of nextStationObjs] of myself)]
+          ifelse trainObj != nobody [
+            set state "transit"
+            set step-in-phase 0
+            create-link-with trainObj [tie]
+          ]
+          []
         ]
-      []
       ]
       state = "transit" [
         ifelse [isWaiting?] of trainObj and length path > 1 [
@@ -581,6 +593,8 @@ to connect-resident-to-train
 
           ifelse [nextStation] of trainObj != nobody and not member? [[id] of nextStation] of trainObj [id] of nextStationObjs [
             set state "connecting"
+            set time-waiting time-waiting + 1
+            set step-in-phase 0
             ask my-links [untie die]
           ]
         []
@@ -588,6 +602,8 @@ to connect-resident-to-train
         [
           if length path = 1 [
             set state "arrived-at-station"
+            set color green
+            ask link-with trainObj [die]
             set step-in-phase 0
           ]
         ]
@@ -595,7 +611,6 @@ to connect-resident-to-train
       state = "arrived-at-station" [
         if step-in-phase >= post-journey-duration [
           set state "arrived-at-destination"
-
           set color blue
         ]
       ]
@@ -603,6 +618,7 @@ to connect-resident-to-train
         set trips-stats replace-item 2 trips-stats (item 2 trips-stats + 1)
         set trips-stats replace-item 1 trips-stats (item 1 trips-stats - 1)
         set trips-timings lput step-in-trip trips-timings
+        set waiting-timings lput time-waiting waiting-timings
 
         set completed-journeys completed-journeys + 1
         die
@@ -634,21 +650,19 @@ to reset-without-setup
   set peak-times (list (list (morning-peak-time * ticks-per-hour) ((morning-peak-time + morning-peak-duration) * ticks-per-hour)) (list (evening-peak-time * ticks-per-hour) ((evening-peak-time + evening-peak-duration) * ticks-per-hour)))
 
   ask stations [
-    set trainIntervals list (peak-train-frequency) (nonpeak-train-frequency)
+    set trainIntervals list (peak-train-frequency * 2) (nonpeak-train-frequency * 2)
     set timeSinceLastTrain (list 0 0)
   ]
 
-  set day 4
-
-  let i ticks
-  while [ticks <= i + (ticks-per-hour * 48)][
-    set in-setup? true
-    go-loop
-  ]
-  reset-ticks
-  show pickDay
   set day pickDay - 1
+  set trips-timings []
+  set waiting-timings []
+
+  ;; [moving-to-origin waiting-at-station in-transit in-connection moving-to-destination]
+  set phase-stats (list 0 0 0 0 0)
+
   clear-all-plots
+  reset-ticks
 end
 
 to-report clip-normal [x minX maxX]
@@ -943,7 +957,7 @@ speed
 speed
 0.1
 2
-2.0
+1.0
 0.1
 1
 NIL
@@ -973,7 +987,7 @@ evening-peak-time
 evening-peak-time
 12
 26
-15.0
+19.0
 1
 1
 NIL
@@ -988,7 +1002,7 @@ morning-peak-duration
 morning-peak-duration
 0
 3
-2.0
+3.0
 1
 1
 NIL
@@ -1003,7 +1017,7 @@ evening-peak-duration
 evening-peak-duration
 0
 5
-1.0
+5.0
 1
 1
 NIL
@@ -1033,29 +1047,11 @@ nonpeak-train-frequency
 nonpeak-train-frequency
 1
 10
-7.0
+6.0
 1
 1
 NIL
 HORIZONTAL
-
-PLOT
-1085
-558
-1285
-708
-Average Journey Time
-NIL
-NIL
-0.0
-10.0
-0.0
-10.0
-true
-false
-"" ""
-PENS
-"default" 1.0 0 -8630108 true "" "plot (sum trips-timings) / max (list (length trips-timings) 1)"
 
 BUTTON
 41
@@ -1120,7 +1116,7 @@ CHOOSER
 pickDay
 pickDay
 0 1 2 3 4 5 6
-6
+0
 
 PLOT
 1360
@@ -1138,8 +1134,44 @@ true
 false
 "" ""
 PENS
-"default" 1.0 0 -16777216 true "" "plot sum [step-in-phase] of residents with [state = \"at-origin\"] / max (list (1) (length [step-in-phase] of residents with [state = \"at-origin\"]))\n"
+"default" 1.0 0 -16777216 true "" "plot sum [item 0 phase-stats] / max (list (1) (length item 0 phase-stats))\n"
 "pen-1" 1.0 0 -13840069 true "" "plot sum [step-in-phase] of residents with [state = \"to-update-station\"] / max (list (1) (length [step-in-phase] of residents with [state = \"to-update-station\"]))"
+
+PLOT
+1078
+578
+1278
+728
+Journey Times
+NIL
+NIL
+80.0
+400.0
+0.0
+400.0
+false
+false
+"" ""
+PENS
+"default" 1.0 1 -16777216 true "" "histogram trips-timings"
+
+PLOT
+844
+692
+1044
+842
+Waiting Times
+NIL
+NIL
+0.0
+200.0
+0.0
+100.0
+true
+false
+"" ""
+PENS
+"default" 1.0 1 -16777216 true "" "histogram waiting-timings"
 
 @#$#@#$#@
 ## WHAT IS IT?
